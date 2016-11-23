@@ -140,20 +140,6 @@ void commandMenuInit()
 
 	dockedPlayer.setParent(nppData._nppHandle);
 
-	tTbData	data = { 0 };
-	if (!dockedPlayer.isCreated()) {
-		dockedPlayer.create(&data);
-
-		// define the default docking behaviour
-		data.uMask = DWS_DF_CONT_LEFT;
-
-		data.pszModuleName = dockedPlayer.getPluginFileName();
-
-		// the dlgDlg should be the index of funcItem where the current function pointer is
-		// in this case is DOCKABLE_DEMO_INDEX
-		data.dlgID = 3;
-		::SendMessage(nppData._nppHandle, NPPM_DMMREGASDCKDLG, 0, (LPARAM)&data);
-	}
 
 	SendMessage(nppData._nppHandle, NPPM_GETPLUGINSCONFIGDIR, sizeof(iniFilePath), (LPARAM)iniFilePath);
 	if (PathFileExists(iniFilePath) == FALSE)
@@ -161,10 +147,8 @@ void commandMenuInit()
 
 	PathAppend(iniFilePath, configFileName);
 
-	int rv = ::GetPrivateProfileInt(sectionName, KEY_USE_DOCKED_PLAYER, 0, iniFilePath);
-	bUseDockedPlayer = ((rv & 1) != 0);
+	bUseDockedPlayer = ((::GetPrivateProfileInt(sectionName, KEY_USE_DOCKED_PLAYER, 0, iniFilePath) & 1) != 0);
 
-	dockedPlayer.display(((rv & 2) != 0) && bUseDockedPlayer);
 
 	setCommand(0, TEXT("Insert Timecode"), insertSubtitleCode, (new ShortcutKey)->set(false, false, false, VK_F5), false);
 	setCommand(1, TEXT("Insert Hiding Timecode"), insertSubtitleCodeEmpty, (new ShortcutKey)->set(false, false, false, VK_F6), false);
@@ -558,11 +542,27 @@ void makeASS() {
 }
 
 void useDockedPlayer() {
-	if(!bUseDockedPlayer || !dockedPlayer.isClosed())
-		bUseDockedPlayer = !bUseDockedPlayer;
-	::CheckMenuItem(::GetMenu(nppData._nppHandle), funcItem[3]._cmdID, MF_BYCOMMAND | (bUseDockedPlayer ? MF_CHECKED : MF_UNCHECKED));
-	if (bUseDockedPlayer) {
-		dockedPlayer.display(true);
-	} else
-		dockedPlayer.display(false);
+	tTbData	data = { 0 };
+	if (!dockedPlayer.isCreated()) {
+		dockedPlayer.create(&data);
+
+		// define the default docking behaviour
+		data.uMask = DWS_DF_CONT_LEFT;
+
+		data.pszModuleName = dockedPlayer.getPluginFileName();
+
+		// the dlgDlg should be the index of funcItem where the current function pointer is
+		// in this case is DOCKABLE_DEMO_INDEX
+		data.dlgID = 3;
+		::SendMessage(nppData._nppHandle, NPPM_DMMREGASDCKDLG, 0, (LPARAM)&data);
+		dockedPlayer.display(((::GetPrivateProfileInt(sectionName, KEY_USE_DOCKED_PLAYER, 0, iniFilePath) & 2) != 0) && bUseDockedPlayer);
+	} else {
+		if (!bUseDockedPlayer || !dockedPlayer.isClosed())
+			bUseDockedPlayer = !bUseDockedPlayer;
+		::CheckMenuItem(::GetMenu(nppData._nppHandle), funcItem[3]._cmdID, MF_BYCOMMAND | (bUseDockedPlayer ? MF_CHECKED : MF_UNCHECKED));
+		if (bUseDockedPlayer) {
+			dockedPlayer.display(true);
+		} else
+			dockedPlayer.display(false);
+	}
 }
