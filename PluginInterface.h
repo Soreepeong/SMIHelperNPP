@@ -18,8 +18,10 @@
 #ifndef PLUGININTERFACE_H
 #define PLUGININTERFACE_H
 
+#ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0600 
-#include <ws2tcpip.h>
+#endif
+#include <winsock2.h>
 #include <windows.h>
 #include <string>
 #include <regex>
@@ -27,6 +29,8 @@
 #include "Notepad_plus_msgs.h"
 
 const int nbChar = 64;
+
+const UINT WM_GRAPH_EVENT = WM_APP + 1;
 
 typedef const TCHAR * (__cdecl * PFUNCGETNAME)();
 

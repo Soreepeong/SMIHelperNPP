@@ -19,6 +19,15 @@
 #include "menuCmdID.h"
 #include "MpcHcRemote.h"
 #include "SRTMaker.h"
+#include "DockedPlayer.h"
+
+bool bUseDockedPlayer;
+DockedPlayer dockedPlayer;
+
+TCHAR iniFilePath[MAX_PATH];
+const TCHAR sectionName[] = TEXT("SMIHelper");
+const TCHAR KEY_USE_DOCKED_PLAYER[] = TEXT("useDockedPlayer");
+const TCHAR configFileName[] = TEXT("SMIHelper.ini");
 
 //
 // The plugin data that Notepad++ needs
@@ -94,6 +103,9 @@ void pluginInit(HANDLE hModule)
 	WSADATA w;
 	WSAStartup((MAKEWORD(2, 2)), &w);
 	hhkLowLevelKybd = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, 0, 0);
+	CoInitializeEx(NULL, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
+
+	dockedPlayer.init((HINSTANCE)hModule, NULL);
 }
 
 //
@@ -101,6 +113,10 @@ void pluginInit(HANDLE hModule)
 //
 void pluginCleanUp()
 {
+	TCHAR kc[3];
+	int k = (bUseDockedPlayer ? 1 : 0) | (dockedPlayer.isClosed() ? 0 : 2);
+	wsprintf(kc, L"%d", k);
+	::WritePrivateProfileString(sectionName, KEY_USE_DOCKED_PLAYER, kc, iniFilePath);
 	UnhookWindowsHookEx(hhkLowLevelKybd);
 	WSACleanup();
 }
@@ -121,19 +137,48 @@ void commandMenuInit()
 	//            ShortcutKey *shortcut,          // optional. Define a shortcut to trigger this command
 	//            bool check0nInit                // optional. Make this menu item be checked visually
 	//            );
-	ShortcutKey k;
-	k._isAlt = k._isCtrl = k._isShift = false;
-	k._key = VK_F9;
+
+	dockedPlayer.setParent(nppData._nppHandle);
+
+	tTbData	data = { 0 };
+	if (!dockedPlayer.isCreated()) {
+		dockedPlayer.create(&data);
+
+		// define the default docking behaviour
+		data.uMask = DWS_DF_CONT_LEFT;
+
+		data.pszModuleName = dockedPlayer.getPluginFileName();
+
+		// the dlgDlg should be the index of funcItem where the current function pointer is
+		// in this case is DOCKABLE_DEMO_INDEX
+		data.dlgID = 3;
+		::SendMessage(nppData._nppHandle, NPPM_DMMREGASDCKDLG, 0, (LPARAM)&data);
+	}
+
+	SendMessage(nppData._nppHandle, NPPM_GETPLUGINSCONFIGDIR, sizeof(iniFilePath), (LPARAM)iniFilePath);
+	if (PathFileExists(iniFilePath) == FALSE)
+		::CreateDirectory(iniFilePath, NULL);
+
+	PathAppend(iniFilePath, configFileName);
+
+	int rv = ::GetPrivateProfileInt(sectionName, KEY_USE_DOCKED_PLAYER, 0, iniFilePath);
+	bUseDockedPlayer = ((rv & 1) != 0);
+
+	dockedPlayer.display(((rv & 2) != 0) && bUseDockedPlayer);
+
 	setCommand(0, TEXT("Insert Timecode"), insertSubtitleCode, (new ShortcutKey)->set(false, false, false, VK_F5), false);
 	setCommand(1, TEXT("Insert Hiding Timecode"), insertSubtitleCodeEmpty, (new ShortcutKey)->set(false, false, false, VK_F6), false);
-	setCommand(2, TEXT("Play/Pause"), playerPlayPause, (new ShortcutKey)->set(false, false, false, VK_F9), false);
-	setCommand(3, TEXT("Go to current line"), playerJumpTo, (new ShortcutKey)->set(false, false, false, VK_F8), false);
-	setCommand(4, TEXT("Rewind"), playerRew, (new ShortcutKey)->set(true, true, false, VK_LEFT), false);
-	setCommand(5, TEXT("Fast Forward"), playerFF, (new ShortcutKey)->set(true, true, false, VK_RIGHT), false);
-	setCommand(6, TEXT("Move line to current time"), gotoCurrentLine, (new ShortcutKey)->set(false, false, false, VK_F7), false);
-	setCommand(7, TEXT("Add template"), addTemplate, NULL, false);
-	setCommand(8, TEXT("Make SRT"), makeSRT, NULL, false);
-	setCommand(9, TEXT("Make ASS"), makeASS, NULL, false);
+	setCommand(2, TEXT("---"), NULL, NULL, false);
+	setCommand(3, TEXT("Use Docked Player"), useDockedPlayer, (new ShortcutKey)->set(true, true, false, 'P'), MF_BYCOMMAND | (bUseDockedPlayer ? MF_CHECKED : MF_UNCHECKED));
+	setCommand(4, TEXT("Play/Pause"), playerPlayPause, (new ShortcutKey)->set(false, false, false, VK_F9), false);
+	setCommand(5, TEXT("Go to current line"), playerJumpTo, (new ShortcutKey)->set(false, false, false, VK_F8), false);
+	setCommand(6, TEXT("Rewind"), playerRew, (new ShortcutKey)->set(true, true, false, VK_LEFT), false);
+	setCommand(7, TEXT("Fast Forward"), playerFF, (new ShortcutKey)->set(true, true, false, VK_RIGHT), false);
+	setCommand(8, TEXT("Move line to current time"), gotoCurrentLine, (new ShortcutKey)->set(false, false, false, VK_F7), false);
+	setCommand(9, TEXT("---"), NULL, NULL, false);
+	setCommand(10, TEXT("Add template"), addTemplate, NULL, false);
+	setCommand(11, TEXT("Make SRT"), makeSRT, NULL, false);
+	setCommand(12, TEXT("Make ASS"), makeASS, NULL, false);
 }
 
 //
@@ -150,7 +195,7 @@ void commandMenuCleanUp()
 //
 // This function help you to initialize your plugin commands
 //
-bool setCommand(size_t index, TCHAR *cmdName, PFUNCPLUGINCMD pFunc, ShortcutKey *sk, bool check0nInit)
+bool setCommand(size_t index, TCHAR *cmdName, PFUNCPLUGINCMD pFunc, ShortcutKey *sk, int check0nInit)
 {
 	if (index >= nbFunc)
 		return false;
@@ -178,13 +223,16 @@ void tryOpenMedia() {
 	TCHAR mpchc[MAX_PATH];
 	DWORD len = MAX_PATH;
 	DWORD res = 0;
-	if (NULL != RegGetValue(HKEY_CURRENT_USER, TEXT("Software\\MPC-HC\\MPC-HC"), TEXT("ExePath"), 0x00010000 | RRF_RT_REG_SZ, NULL, &mpchc, &len)) {
-		MessageBox(nppData._nppHandle, TEXT("MPC-HC not found."), TEXT("SMI Helper Error"), MB_ICONERROR);
-		return;
-	}
-	if (NULL != RegGetValue(HKEY_CURRENT_USER, TEXT("Software\\MPC-HC\\MPC-HC\\Settings"), TEXT("EnableWebServer"), 0x00010000 | RRF_RT_REG_DWORD, NULL, &res, &len) || res == 0) {
-		MessageBox(nppData._nppHandle, TEXT("Web Server feature of MPC-HC is inactive."), TEXT("SMI Helper Error"), MB_ICONERROR);
-		return;
+
+	if (!bUseDockedPlayer) {
+		if (NULL != RegGetValue(HKEY_CURRENT_USER, TEXT("Software\\MPC-HC\\MPC-HC"), TEXT("ExePath"), 0x00010000 | RRF_RT_REG_SZ, NULL, &mpchc, &len)) {
+			MessageBox(nppData._nppHandle, TEXT("MPC-HC not found."), TEXT("SMI Helper Error"), MB_ICONERROR);
+			return;
+		}
+		if (NULL != RegGetValue(HKEY_CURRENT_USER, TEXT("Software\\MPC-HC\\MPC-HC\\Settings"), TEXT("EnableWebServer"), 0x00010000 | RRF_RT_REG_DWORD, NULL, &res, &len) || res == 0) {
+			MessageBox(nppData._nppHandle, TEXT("Web Server feature of MPC-HC is inactive."), TEXT("SMI Helper Error"), MB_ICONERROR);
+			return;
+		}
 	}
 	::SendMessage(nppData._nppHandle, NPPM_GETFULLCURRENTPATH, MAX_PATH, (WPARAM)basepath);
 	TCHAR *pos = wcsrchr(basepath, L'.');
@@ -199,7 +247,7 @@ void tryOpenMedia() {
 					if (pos != NULL) {
 						pos++;
 						wcsupr(pos);
-						if (wcsstr(szMediaTypes, pos) != NULL){
+						if (wcsstr(szMediaTypes, pos) != NULL) {
 							::SendMessage(nppData._nppHandle, NPPM_GETCURRENTDIRECTORY, MAX_PATH, (WPARAM)szFile);
 							int len = wcslen(szFile);
 							if (szFile[len - 1] != TEXT('\\'))
@@ -212,7 +260,6 @@ void tryOpenMedia() {
 			} while (FindNextFile(hList, &file));
 			FindClose(hList);
 		}
-		// 3G2;3GP;3GP2;3GPP;AMV;ASF;AVI;AVS;DIVX;EVO;F4V;FLV;GVI;HDMOV;IFO;K3G;M2T;M2TS;MKV;MK3D;MOV;MP2V;MP4;MPE;MPEG;MPG;MPV2;MQV;MTS;MTV;NSV;OGM;OGV;QT;RM;RMVB;RV;SKM;TP;TPR;TS;VOB;WEBM;WM;WMP;WMV;A52;AAC;AC3;AIF;AIFC;AIFF;ALAC;AMR;APE;AU;CDA;DTS;FLA;FLAC;M1A;M2A;M4A;M4B;M4P;MID;MKA;MP1;MP2;MP3;MPA;MPC;MPP;MP+;NSA;OFR;OFS;OGA;OGG;RA;SND;SPX;TTA;WAV;WAVE;WMA;WV
 	}
 	if (szFile[0] == NULL) {
 		ZeroMemory(&ofn, sizeof(ofn));
@@ -233,17 +280,25 @@ void tryOpenMedia() {
 	}
 	if (szFile[0] == NULL)
 		return;
-	STARTUPINFO si;
-	PROCESS_INFORMATION pi;
-	ZeroMemory(&si, sizeof(si));
-	si.cb = sizeof(si);
-	ZeroMemory(&pi, sizeof(pi));
-	TCHAR cmd[MAX_PATH * 2];
+	if (bUseDockedPlayer) {
+		if (dockedPlayer.State() != PlaybackState::STATE_NO_GRAPH && wcscmp(dockedPlayer.GetFileName(), szFile) == 0)
+			return;
+		dockedPlayer.TearDownGraph();
+		dockedPlayer.OpenFile(szFile);
+		dockedPlayer.display(true);
+	} else {
+		STARTUPINFO si;
+		PROCESS_INFORMATION pi;
+		ZeroMemory(&si, sizeof(si));
+		si.cb = sizeof(si);
+		ZeroMemory(&pi, sizeof(pi));
+		TCHAR cmd[MAX_PATH * 2];
 
-	wsprintf(cmd, TEXT("\"%s\" \"%s\""), mpchc, szFile);
-	if (!CreateProcess(mpchc, cmd, NULL, NULL, false, NULL, NULL, NULL, &si, &pi)) {
-		CloseHandle(pi.hProcess);
-		CloseHandle(pi.hThread);
+		wsprintf(cmd, TEXT("\"%s\" \"%s\""), mpchc, szFile);
+		if (!CreateProcess(mpchc, cmd, NULL, NULL, false, NULL, NULL, NULL, &si, &pi)) {
+			CloseHandle(pi.hProcess);
+			CloseHandle(pi.hThread);
+		}
 	}
 }
 
@@ -256,7 +311,7 @@ void insertSubtitleCode()
 	if (which == -1)
 		return;
 
-	int time = getMpcHcTime();
+	int time = bUseDockedPlayer ? (int) dockedPlayer.GetTime() : getMpcHcTime();
 
 	if (time == -1) {
 		tryOpenMedia();
@@ -308,7 +363,7 @@ void insertSubtitleCodeEmpty()
 	if (which == -1)
 		return;
 
-	int time = getMpcHcTime();
+	int time = bUseDockedPlayer ? (int)dockedPlayer.GetTime() : getMpcHcTime();
 
 	if (time == -1) {
 		tryOpenMedia();
@@ -345,8 +400,15 @@ void playerJumpTo() {
 		std::smatch match;
 		std::string subject(sync);
 		if (std::regex_search(subject, match, syncmatcher) && match.size() > 1) {
-			if (0 != seekMpcHc(atoi(match.str(2).c_str())))
-				tryOpenMedia();
+			if (bUseDockedPlayer) {
+				if (dockedPlayer.isClosed())
+					tryOpenMedia();
+				else
+					dockedPlayer.SetTime(atoi(match.str(2).c_str()));
+			} else {
+				if (0 != seekMpcHc(atoi(match.str(2).c_str())))
+					tryOpenMedia();
+			}
 			break;
 		}
 	} while (curLine-- > 0);
@@ -360,7 +422,8 @@ void gotoCurrentLine() {
 		return;
 	HWND curScintilla = (which == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
 
-	int time = getMpcHcTime();
+	int time = bUseDockedPlayer ? (int)dockedPlayer.GetTime() : getMpcHcTime();
+
 	if (time == -1) {
 		tryOpenMedia();
 		return;
@@ -386,26 +449,57 @@ void gotoCurrentLine() {
 
 void playerPlayPause()
 {
-	if(0 != sendMpcHcCommand(889))
-		tryOpenMedia();
+	if (bUseDockedPlayer) {
+		switch (dockedPlayer.State()){
+			case PlaybackState::STATE_NO_GRAPH:
+				tryOpenMedia();
+				break;
+			case PlaybackState::STATE_RUNNING:
+				dockedPlayer.Pause();
+				break;
+			case PlaybackState::STATE_STOPPED:
+			case PlaybackState::STATE_PAUSED:
+				dockedPlayer.Play();
+				break;
+		}
+	} else {
+		if (0 != sendMpcHcCommand(889))
+			tryOpenMedia();
+	}
 }
 
 void playerRew()
 {
-	//sendMpcHcCommand(899);
-	if(0 != seekMpcHc(getMpcHcTime() - 3000))
-		tryOpenMedia();
-	else
-		sendMpcHcCommand(887);
+	if (bUseDockedPlayer) {
+		if (dockedPlayer.isClosed())
+			tryOpenMedia();
+		else {
+			dockedPlayer.SetTime(dockedPlayer.GetTime() - 3000);
+			dockedPlayer.Play();
+		}
+	} else {
+		if(0 != seekMpcHc(getMpcHcTime() - 3000))
+			tryOpenMedia();
+		else
+			sendMpcHcCommand(887);
+	}
 }
 
 void playerFF()
 {
-	//sendMpcHcCommand(900);
-	if (0 != seekMpcHc(getMpcHcTime() + 3000))
-		tryOpenMedia();
-	else
-		sendMpcHcCommand(887);
+	if (bUseDockedPlayer) {
+		if (dockedPlayer.isClosed())
+			tryOpenMedia();
+		else {
+			dockedPlayer.SetTime(dockedPlayer.GetTime() + 3000);
+			dockedPlayer.Play();
+		}
+	} else {
+		if (0 != seekMpcHc(getMpcHcTime() + 3000))
+			tryOpenMedia();
+		else
+			sendMpcHcCommand(887);
+	}
 }
 
 void addTemplate() {
@@ -461,4 +555,14 @@ void makeASS() {
 	curScintilla = (which == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
 	::SendMessage(curScintilla, SCI_SETTEXT, 0, (LPARAM)res->c_str());
 	delete res;
+}
+
+void useDockedPlayer() {
+	if(!bUseDockedPlayer || !dockedPlayer.isClosed())
+		bUseDockedPlayer = !bUseDockedPlayer;
+	::CheckMenuItem(::GetMenu(nppData._nppHandle), funcItem[3]._cmdID, MF_BYCOMMAND | (bUseDockedPlayer ? MF_CHECKED : MF_UNCHECKED));
+	if (bUseDockedPlayer) {
+		dockedPlayer.display(true);
+	} else
+		dockedPlayer.display(false);
 }

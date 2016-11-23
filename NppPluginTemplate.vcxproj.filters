@@ -13,6 +13,12 @@
       <UniqueIdentifier>{67DA6AB6-F800-4c08-8B7A-83BB121AAD01}</UniqueIdentifier>
       <Extensions>rc;ico;cur;bmp;dlg;rc2;rct;bin;rgs;gif;jpg;jpeg;jpe;resx</Extensions>
     </Filter>
+    <Filter Include="DockingFeature">
+      <UniqueIdentifier>{5db64596-8d79-4f13-9d1b-04f780adb8ed}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Player">
+      <UniqueIdentifier>{395ec2ac-3d34-4b70-9bc2-4ed1da920a1e}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="PluginDefinition.cpp">
@@ -29,6 +35,15 @@
     </ClCompile>
     <ClCompile Include="entities.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="DockingFeature\StaticDialog.cpp">
+      <Filter>DockingFeature</Filter>
+    </ClCompile>
+    <ClCompile Include="DockedPlayer.cpp">
+      <Filter>Player</Filter>
+    </ClCompile>
+    <ClCompile Include="VideoRenderers.cpp">
+      <Filter>Player</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -59,10 +74,39 @@
     <ClInclude Include="entities.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="DockingFeature\Docking.h">
+      <Filter>DockingFeature</Filter>
+    </ClInclude>
+    <ClInclude Include="DockingFeature\DockingDlgInterface.h">
+      <Filter>DockingFeature</Filter>
+    </ClInclude>
+    <ClInclude Include="DockingFeature\dockingResource.h">
+      <Filter>DockingFeature</Filter>
+    </ClInclude>
+    <ClInclude Include="DockingFeature\StaticDialog.h">
+      <Filter>DockingFeature</Filter>
+    </ClInclude>
+    <ClInclude Include="DockingFeature\Window.h">
+      <Filter>DockingFeature</Filter>
+    </ClInclude>
+    <ClInclude Include="resource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="DockedPlayer.h">
+      <Filter>Player</Filter>
+    </ClInclude>
+    <ClInclude Include="VideoRenderers.h">
+      <Filter>Player</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="README.md">
       <Filter>Resource Files</Filter>
     </None>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="SMIHelper.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
   </ItemGroup>
 </Project>

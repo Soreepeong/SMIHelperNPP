@@ -17,9 +17,13 @@
 
 #ifndef WINDOW_CONTROL_H
 #define WINDOW_CONTROL_H
-
+#ifdef WIN32_LEAN_AND_MEAN
 #include <windows.h>
-
+#else
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#undef WIN32_LEAN_AND_MEAN
+#endif
 class Window
 {
 public:

@@ -36,7 +36,7 @@ const TCHAR NPP_PLUGIN_NAME[] = TEXT("SMIHelper");
 //
 // Here define the number of your plugin commands
 //
-const int nbFunc = 10;
+const int nbFunc = 13;
 
 
 //
@@ -64,7 +64,7 @@ void commandMenuCleanUp();
 //
 // Function which sets your command 
 //
-bool setCommand(size_t index, TCHAR *cmdName, PFUNCPLUGINCMD pFunc, ShortcutKey *sk = NULL, bool check0nInit = false);
+bool setCommand(size_t index, TCHAR *cmdName, PFUNCPLUGINCMD pFunc, ShortcutKey *sk = NULL, int check0nInit = false);
 
 
 //
@@ -81,5 +81,6 @@ void playerFF();
 void addTemplate();
 void makeSRT();
 void makeASS();
+void useDockedPlayer();
 
 #endif //PLUGINDEFINITION_H

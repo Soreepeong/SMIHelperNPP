@@ -63,7 +63,13 @@ public:
     virtual void destroy() {
     };
 
-	virtual void display(bool toShow = true) const {
+	bool isClosed() {
+		return _isClosed;
+	}
+
+
+	virtual void display(bool toShow = true) {
+		_isClosed = !toShow;
 		::SendMessage(_hParent, toShow?NPPM_DMMSHOW:NPPM_DMMHIDE, 0, (LPARAM)_hSelf);
 	};
 
@@ -87,6 +93,7 @@ protected :
 					{
 						case DMN_CLOSE:
 						{
+							_isClosed = true;
 							break;
 						}
 						case DMN_FLOAT:
@@ -115,6 +122,7 @@ protected :
     HWND			_HSource;
 	tTbData*		_data;
 	int				_dlgID;
+	bool _isClosed;
 	bool            _isFloating;
 	TCHAR            _moduleName[MAX_PATH];
 	TCHAR			_pluginName[MAX_PATH];

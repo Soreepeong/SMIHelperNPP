@@ -18,7 +18,7 @@ std::string* getRequest(char *request) {
 
 	localhost.sin_family = AF_INET;
 	localhost.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-	localhost.sin_port = htons(port);
+	localhost.sin_port = htons((u_short)port);
 
 	SOCKET ConnectSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
 	if (ConnectSocket == INVALID_SOCKET) {
