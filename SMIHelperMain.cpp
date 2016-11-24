@@ -19,70 +19,60 @@
 
 extern FuncItem funcItem[nbFunc];
 extern NppData nppData;
+extern DWORD myMessageId;
 
+BOOL APIENTRY DllMain(HANDLE hModule,
+	DWORD  reasonForCall,
+	LPVOID lpReserved) {
+	switch (reasonForCall) {
+		case DLL_PROCESS_ATTACH:
+			pluginInit(hModule);
+			break;
 
-BOOL APIENTRY DllMain( HANDLE hModule, 
-                       DWORD  reasonForCall, 
-                       LPVOID lpReserved )
-{
-    switch (reasonForCall)
-    {
-      case DLL_PROCESS_ATTACH:
-        pluginInit(hModule);
-        break;
+		case DLL_PROCESS_DETACH:
+			commandMenuCleanUp();
+			pluginCleanUp();
+			break;
 
-      case DLL_PROCESS_DETACH:
-		commandMenuCleanUp();
-        pluginCleanUp();
-        break;
+		case DLL_THREAD_ATTACH:
+			break;
 
-      case DLL_THREAD_ATTACH:
-        break;
+		case DLL_THREAD_DETACH:
+			break;
+	}
 
-      case DLL_THREAD_DETACH:
-        break;
-    }
-
-    return TRUE;
+	return TRUE;
 }
 
 
-extern "C" __declspec(dllexport) void setInfo(NppData notpadPlusData)
-{
+extern "C" __declspec(dllexport) void setInfo(NppData notpadPlusData) {
 	nppData = notpadPlusData;
 	commandMenuInit();
 }
 
-extern "C" __declspec(dllexport) const TCHAR * getName()
-{
+extern "C" __declspec(dllexport) const TCHAR * getName() {
 	return NPP_PLUGIN_NAME;
 }
 
-extern "C" __declspec(dllexport) FuncItem * getFuncsArray(int *nbF)
-{
+extern "C" __declspec(dllexport) FuncItem * getFuncsArray(int *nbF) {
 	*nbF = nbFunc;
 	return funcItem;
 }
 
 
-extern "C" __declspec(dllexport) void beNotified(SCNotification *notifyCode)
-{
+extern "C" __declspec(dllexport) void beNotified(SCNotification *notifyCode) {
 }
 
-
-// Here you can process the Npp Messages 
-// I will make the messages accessible little by little, according to the need of plugin development.
-// Please let me know if you need to access to some messages :
-// http://sourceforge.net/forum/forum.php?forum_id=482781
-//
-extern "C" __declspec(dllexport) LRESULT messageProc(UINT Message, WPARAM wParam, LPARAM lParam)
-{
+extern "C" __declspec(dllexport) LRESULT messageProc(UINT Message, WPARAM wParam, LPARAM lParam) {
+	if (Message == NPPM_MSGTOPLUGIN) {
+		HandleMessages(lParam);
+		return false;
+	}
 	return TRUE;
 }
 
 #ifdef UNICODE
-extern "C" __declspec(dllexport) BOOL isUnicode()
-{
-    return TRUE;
+extern "C" __declspec(dllexport) BOOL isUnicode() {
+	return TRUE;
 }
 #endif //UNICODE

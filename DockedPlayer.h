@@ -39,9 +39,11 @@ public:
 	HRESULT Pause();
 	HRESULT Stop();
 
-	LONGLONG	GetLength();
+	bool	IsFocused() const { return m_focused; };
+
+	LONGLONG	GetLength() const;
 	LONGLONG	GetTime();
-	HRESULT SetTime(LONGLONG time);
+	HRESULT		SetTime(LONGLONG time);
 
 	BOOL    HasVideo() const;
 	HRESULT UpdateVideoWindow(const LPRECT prc);
@@ -59,6 +61,7 @@ private:
 	long m_videoWidth, m_videoHeight;
 	long m_clientTop;
 	bool isVideo;
+	bool m_focused;
 
 	HRESULT InitializeGraph();
 	HRESULT CreateVideoRenderer();

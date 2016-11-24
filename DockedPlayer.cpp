@@ -111,7 +111,7 @@ HRESULT DockedPlayer::Stop() {
 	return hr;
 }
 
-LONGLONG DockedPlayer::GetLength() {
+LONGLONG DockedPlayer::GetLength() const {
 	LONGLONG res, u;
 	if (m_state == STATE_NO_GRAPH)
 		return -1;
@@ -373,6 +373,24 @@ BOOL CALLBACK DockedPlayer::run_dlgProc(UINT message, WPARAM wParam, LPARAM lPar
 			FillRect(hdc, &r, (HBRUSH)(COLOR_WINDOW + 1));
 			return true;
 		}
+		case WM_LBUTTONDOWN:
+		case WM_RBUTTONDOWN:
+			SetFocus(getHSelf());
+			break;
+		case WM_NOTIFY: {
+			bool nf = GetFocus() == getHSelf() || GetFocus() == m_slider;
+			if (m_focused == nf)
+				break;
+			m_focused = nf;
+			RECT rc;
+			GetClientRect(m_slider, &rc);
+			rc.left = 10;
+			rc.right -= 10;
+			rc.top = m_clientTop + rc.bottom + 10;
+			rc.bottom = rc.top + 600;
+			InvalidateRect(getHSelf(), &rc, true);
+			break;
+		}
 		case WM_PAINT: {
 			PAINTSTRUCT ps;
 			HDC hdc;
@@ -384,6 +402,22 @@ BOOL CALLBACK DockedPlayer::run_dlgProc(UINT message, WPARAM wParam, LPARAM lPar
 				Repaint(hdc);
 			} else {
 				FillRect(hdc, &ps.rcPaint, (HBRUSH)(COLOR_WINDOW + 1));
+			}
+			if (m_focused) {
+				RECT rc;
+				const TCHAR *msg = L""
+					"Left: -3 sec\n"
+					"Right: +3 sec\n"
+					"Space: Play / Pause\n"
+					"Z, Num0: Undo\n"
+					"X, Up: Insert timecode\n"
+					"C, Down: Insert stop timecode";
+				GetClientRect(m_slider, &rc);
+				rc.left = 10;
+				rc.right -= 10;
+				rc.top = m_clientTop + rc.bottom + 10;
+				rc.bottom = rc.top + 600;
+				DrawText(hdc, msg, wcslen(msg), &rc, DT_LEFT | DT_EXTERNALLEADING | DT_WORDBREAK);
 			}
 
 			EndPaint(getHSelf(), &ps);

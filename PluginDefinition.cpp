@@ -23,8 +23,10 @@
 
 bool bUseDockedPlayer;
 DockedPlayer dockedPlayer;
+DWORD myMessageId;
 
 TCHAR iniFilePath[MAX_PATH];
+TCHAR moduleName[MAX_PATH];
 const TCHAR sectionName[] = TEXT("SMIHelper");
 const TCHAR KEY_USE_DOCKED_PLAYER[] = TEXT("useDockedPlayer");
 const TCHAR configFileName[] = TEXT("SMIHelper.ini");
@@ -47,63 +49,105 @@ bool isSMIfile() {
 	return filename_len >= 4 && wcscmp(filename + filename_len - 4, TEXT(".smi")) == 0;
 }
 
-DWORD WINAPI ProcessKeystroke(LPVOID lParam) {
+DWORD WINAPI HandleMessages(LPARAM lParam) {
 	switch ((int)lParam) {
-	case VK_F5: insertSubtitleCode(); break;
-	case VK_F6: insertSubtitleCodeEmpty(); break;
-	case VK_F9: playerPlayPause(); break;
-	case VK_F8: playerJumpTo(); break;
-	case VK_F7: gotoCurrentLine(); break;
+		case VK_F5: insertSubtitleCode(); break;
+		case VK_F6: insertSubtitleCodeEmpty(); break;
+		case VK_F9: playerPlayPause(); break;
+		case VK_F8: playerJumpTo(); break;
+		case VK_F7: gotoCurrentLine(); break;
+		case VK_LEFT: playerRew(); break;
+		case VK_RIGHT: playerFF(); break;
+		case 'X':
+		case VK_UP:
+			insertSubtitleCode();
+			break;
+		case 'C':
+		case VK_DOWN:
+			insertSubtitleCodeEmpty();
+			break;
+		case VK_SPACE: playerPlayPause(); break;
+		case 'Z': 
+		case VK_NUMPAD0: {
+			int which = -1;
+			::SendMessage(nppData._nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&which);
+			if (which == -1)
+				break;
+			HWND curScintilla = (which == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
+			::SendMessage(curScintilla, SCI_UNDO, 0, 0);
+			::SendMessage(curScintilla, SCI_LINESCROLL, 0, -1);
+			break;
+		}
+		case 'S': {
+			::SendMessage(nppData._nppHandle, NPPM_SAVECURRENTFILE, 0, 0);
+			break;
+		}
 	}
 	return 0;
 }
 
-LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam)
-{
-	BOOL fEatKeystroke = FALSE;
-
-	
-	if (GetForegroundWindow() == nppData._nppHandle && nCode == HC_ACTION)
-	{
+LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
+	if (GetForegroundWindow() == nppData._nppHandle && nCode == HC_ACTION) {
 		if (isSMIfile()) {
-			switch (wParam)
-			{
-			case WM_KEYDOWN:
-			case WM_SYSKEYDOWN:
-			case WM_KEYUP:
-			case WM_SYSKEYUP:
-				PKBDLLHOOKSTRUCT p = (PKBDLLHOOKSTRUCT)lParam;
-				fEatKeystroke = true;
-				switch (p->vkCode) {
-				case VK_F5:
-				case VK_F6:
-				case VK_F9:
-				case VK_F8:
-				case VK_F7:
-					if (wParam == WM_KEYDOWN) {
-						CloseHandle(CreateThread(NULL, NULL, ProcessKeystroke, (LPVOID)p->vkCode, NULL, NULL));
+			switch (wParam) {
+				case WM_KEYDOWN:
+				case WM_SYSKEYDOWN:
+				case WM_KEYUP:
+				case WM_SYSKEYUP:
+					PKBDLLHOOKSTRUCT p = (PKBDLLHOOKSTRUCT)lParam;
+					switch (p->vkCode) {
+						case VK_F5:
+						case VK_F6:
+						case VK_F9:
+						case VK_F8:
+						case VK_F7: {
+							if (wParam == WM_KEYDOWN) {
+								PostMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN, (WPARAM)moduleName, (LPARAM)p->vkCode);
+								return 1;
+							}
+							break;
+						}
+						case VK_SPACE:
+						case VK_LEFT:
+						case VK_RIGHT: {
+							if (GetAsyncKeyState(VK_CONTROL) && GetAsyncKeyState(VK_MENU) && wParam == WM_KEYDOWN) {
+								PostMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN, (WPARAM)moduleName, (LPARAM)p->vkCode);
+								return 1;
+							}
+						}
+						case 'Z':
+						case 'X':
+						case 'C':
+						case 'S':
+						case VK_NUMPAD0:
+						case VK_UP:
+						case VK_DOWN:{
+							if (dockedPlayer.IsFocused()) {
+								if (wParam == WM_KEYDOWN) {
+									PostMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN, (WPARAM)moduleName, (LPARAM)p->vkCode);
+								}
+								return 1;
+							}
+							break;
+						}
 					}
-					break;
-				default:
-					fEatKeystroke = false;
-				}
-				break;
 			}
 		}
 	}
-	return(fEatKeystroke ? 1 : CallNextHookEx(NULL, nCode, wParam, lParam));
+	return CallNextHookEx(NULL, nCode, wParam, lParam);
 }
 HHOOK hhkLowLevelKybd;
 
 //
 // Initialize your plugin data here
 // It will be called while plugin loading   
-void pluginInit(HANDLE hModule)
-{
+void pluginInit(HANDLE hModule) {
 	WSADATA w;
 	WSAStartup((MAKEWORD(2, 2)), &w);
 	hhkLowLevelKybd = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, 0, 0);
 	CoInitializeEx(NULL, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
+	GetModuleFileName((HMODULE) hModule, moduleName, sizeof(moduleName));
+	wcscpy(moduleName, wcsrchr(moduleName, '\\') + 1);
 
 	dockedPlayer.init((HINSTANCE)hModule, NULL);
 }
@@ -111,8 +155,7 @@ void pluginInit(HANDLE hModule)
 //
 // Here you can do the clean up, save the parameters (if any) for the next session
 //
-void pluginCleanUp()
-{
+void pluginCleanUp() {
 	TCHAR kc[3];
 	int k = (bUseDockedPlayer ? 1 : 0) | (dockedPlayer.isClosed() ? 0 : 2);
 	wsprintf(kc, L"%d", k);
@@ -121,23 +164,8 @@ void pluginCleanUp()
 	WSACleanup();
 }
 
-//
-// Initialization of your plugin commands
-// You should fill your plugins commands here
-void commandMenuInit()
-{
-
-	//--------------------------------------------//
-	//-- STEP 3. CUSTOMIZE YOUR PLUGIN COMMANDS --//
-	//--------------------------------------------//
-	// with function :
-	// setCommand(int index,                      // zero based number to indicate the order of command
-	//            TCHAR *commandName,             // the command name that you want to see in plugin menu
-	//            PFUNCPLUGINCMD functionPointer, // the symbol of function (function pointer) associated with this command. The body should be defined below. See Step 4.
-	//            ShortcutKey *shortcut,          // optional. Define a shortcut to trigger this command
-	//            bool check0nInit                // optional. Make this menu item be checked visually
-	//            );
-
+void commandMenuInit() {
+	SendMessage(nppData._nppHandle, NPPM_ALLOCATECMDID, 1, (LPARAM) &myMessageId);
 	dockedPlayer.setParent(nppData._nppHandle);
 
 
@@ -168,8 +196,7 @@ void commandMenuInit()
 //
 // Here you can do the clean up (especially for the shortcut)
 //
-void commandMenuCleanUp()
-{
+void commandMenuCleanUp() {
 	// Don't forget to deallocate your shortcut here
 	for (int i = 0; i < nbFunc; i++)
 		delete funcItem[i]._pShKey;
@@ -179,8 +206,7 @@ void commandMenuCleanUp()
 //
 // This function help you to initialize your plugin commands
 //
-bool setCommand(size_t index, TCHAR *cmdName, PFUNCPLUGINCMD pFunc, ShortcutKey *sk, int check0nInit)
-{
+bool setCommand(size_t index, TCHAR *cmdName, PFUNCPLUGINCMD pFunc, ShortcutKey *sk, int check0nInit) {
 	if (index >= nbFunc)
 		return false;
 
@@ -286,8 +312,7 @@ void tryOpenMedia() {
 	}
 }
 
-void insertSubtitleCode()
-{
+void insertSubtitleCode() {
 	// Get the current scintilla
 	int which = -1;
 	char sync[8192];
@@ -295,7 +320,7 @@ void insertSubtitleCode()
 	if (which == -1)
 		return;
 
-	int time = bUseDockedPlayer ? (int) dockedPlayer.GetTime() : getMpcHcTime();
+	int time = bUseDockedPlayer ? (int)dockedPlayer.GetTime() : getMpcHcTime();
 
 	if (time == -1) {
 		tryOpenMedia();
@@ -332,15 +357,14 @@ void insertSubtitleCode()
 	if (curLine == lineCount - 1) { // last line?
 		::SendMessage(curScintilla, SCI_LINEEND, 0, 0);
 		::SendMessage(curScintilla, SCI_ADDTEXT, 2, (LPARAM)"\r\n");
-	}
-	else
+	} else
 		::SendMessage(curScintilla, SCI_GOTOLINE, curLine + 1, 0);
+	::SendMessage(curScintilla, SCI_LINESCROLL, 0, 1);
 	::SendMessage(curScintilla, SCI_ENDUNDOACTION, 0, 0);
 	LockWindowUpdate(NULL);
 }
 
-void insertSubtitleCodeEmpty()
-{
+void insertSubtitleCodeEmpty() {
 	// Get the current scintilla
 	int which = -1;
 	::SendMessage(nppData._nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&which);
@@ -362,6 +386,7 @@ void insertSubtitleCodeEmpty()
 	::SendMessage(curScintilla, SCI_BEGINUNDOACTION, 0, 0);
 	::SendMessage(curScintilla, SCI_HOME, 0, 0);
 	::SendMessage(curScintilla, SCI_ADDTEXT, strlen(test), (LPARAM)test);
+	::SendMessage(curScintilla, SCI_LINESCROLL, 0, 1);
 	::SendMessage(curScintilla, SCI_ENDUNDOACTION, 0, 0);
 }
 
@@ -379,13 +404,13 @@ void playerJumpTo() {
 		int lineLength = ::SendMessage(curScintilla, SCI_LINELENGTH, curLine, 0);
 		if (lineLength - 1 > sizeof(sync))
 			continue;
-		::SendMessage(curScintilla, SCI_GETLINE, curLine, (WPARAM) sync);
+		::SendMessage(curScintilla, SCI_GETLINE, curLine, (WPARAM)sync);
 		sync[lineLength] = 0;
 		std::smatch match;
 		std::string subject(sync);
 		if (std::regex_search(subject, match, syncmatcher) && match.size() > 1) {
 			if (bUseDockedPlayer) {
-				if (dockedPlayer.isClosed())
+				if (dockedPlayer.State() == PlaybackState::STATE_NO_GRAPH)
 					tryOpenMedia();
 				else
 					dockedPlayer.SetTime(atoi(match.str(2).c_str()));
@@ -431,10 +456,9 @@ void gotoCurrentLine() {
 	} while (curLine-- > 0);
 }
 
-void playerPlayPause()
-{
+void playerPlayPause() {
 	if (bUseDockedPlayer) {
-		switch (dockedPlayer.State()){
+		switch (dockedPlayer.State()) {
 			case PlaybackState::STATE_NO_GRAPH:
 				tryOpenMedia();
 				break;
@@ -452,8 +476,7 @@ void playerPlayPause()
 	}
 }
 
-void playerRew()
-{
+void playerRew() {
 	if (bUseDockedPlayer) {
 		if (dockedPlayer.isClosed())
 			tryOpenMedia();
@@ -462,15 +485,14 @@ void playerRew()
 			dockedPlayer.Play();
 		}
 	} else {
-		if(0 != seekMpcHc(getMpcHcTime() - 3000))
+		if (0 != seekMpcHc(getMpcHcTime() - 3000))
 			tryOpenMedia();
 		else
 			sendMpcHcCommand(887);
 	}
 }
 
-void playerFF()
-{
+void playerFF() {
 	if (bUseDockedPlayer) {
 		if (dockedPlayer.isClosed())
 			tryOpenMedia();
