@@ -19,6 +19,12 @@
     <Filter Include="Player">
       <UniqueIdentifier>{395ec2ac-3d34-4b70-9bc2-4ed1da920a1e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="FFMS2">
+      <UniqueIdentifier>{e97a23fd-42ce-47ad-b0a1-14507d0a7577}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="NPP">
+      <UniqueIdentifier>{3cb5af1b-9ff3-4aa6-b796-5e6df7277d33}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="PluginDefinition.cpp">
@@ -42,27 +48,12 @@
     <ClCompile Include="DockedPlayer.cpp">
       <Filter>Player</Filter>
     </ClCompile>
-    <ClCompile Include="VideoRenderers.cpp">
-      <Filter>Player</Filter>
-    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="menuCmdID.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Notepad_plus_msgs.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="PluginDefinition.h">
       <Filter>Header Files</Filter>
     </ClInclude>
-    <ClInclude Include="PluginInterface.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="DockingFeature\resource.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="Scintilla.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="MpcHcRemote.h">
@@ -95,8 +86,20 @@
     <ClInclude Include="DockedPlayer.h">
       <Filter>Player</Filter>
     </ClInclude>
-    <ClInclude Include="VideoRenderers.h">
-      <Filter>Player</Filter>
+    <ClInclude Include="ffms2\ffms.h">
+      <Filter>FFMS2</Filter>
+    </ClInclude>
+    <ClInclude Include="menuCmdID.h">
+      <Filter>NPP</Filter>
+    </ClInclude>
+    <ClInclude Include="Notepad_plus_msgs.h">
+      <Filter>NPP</Filter>
+    </ClInclude>
+    <ClInclude Include="Scintilla.h">
+      <Filter>NPP</Filter>
+    </ClInclude>
+    <ClInclude Include="PluginInterface.h">
+      <Filter>NPP</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -108,5 +111,8 @@
     <ResourceCompile Include="SMIHelper.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="ffms2\ffms2.lib" />
   </ItemGroup>
 </Project>

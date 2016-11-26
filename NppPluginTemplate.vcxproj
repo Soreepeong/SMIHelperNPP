@@ -110,7 +110,6 @@
     <ClCompile Include="SMIHelperMain.cpp" />
     <ClCompile Include="PluginDefinition.cpp" />
     <ClCompile Include="SRTMaker.cpp" />
-    <ClCompile Include="VideoRenderers.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DockedPlayer.h" />
@@ -121,6 +120,7 @@
     <ClInclude Include="DockingFeature\StaticDialog.h" />
     <ClInclude Include="DockingFeature\Window.h" />
     <ClInclude Include="entities.h" />
+    <ClInclude Include="ffms2\ffms.h" />
     <ClInclude Include="menuCmdID.h" />
     <ClInclude Include="MpcHcRemote.h" />
     <ClInclude Include="Notepad_plus_msgs.h" />
@@ -129,13 +129,15 @@
     <ClInclude Include="resource.h" />
     <ClInclude Include="Scintilla.h" />
     <ClInclude Include="SRTMaker.h" />
-    <ClInclude Include="VideoRenderers.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="README.md" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="SMIHelper.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Library Include="ffms2\ffms2.lib" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

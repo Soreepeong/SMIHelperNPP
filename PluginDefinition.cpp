@@ -182,15 +182,16 @@ void commandMenuInit() {
 	setCommand(1, TEXT("Insert Hiding Timecode"), insertSubtitleCodeEmpty, (new ShortcutKey)->set(false, false, false, VK_F6), false);
 	setCommand(2, TEXT("---"), NULL, NULL, false);
 	setCommand(3, TEXT("Use Docked Player"), useDockedPlayer, (new ShortcutKey)->set(true, true, false, 'P'), MF_BYCOMMAND | (bUseDockedPlayer ? MF_CHECKED : MF_UNCHECKED));
-	setCommand(4, TEXT("Play/Pause"), playerPlayPause, (new ShortcutKey)->set(false, false, false, VK_F9), false);
-	setCommand(5, TEXT("Go to current line"), playerJumpTo, (new ShortcutKey)->set(false, false, false, VK_F8), false);
-	setCommand(6, TEXT("Rewind"), playerRew, (new ShortcutKey)->set(true, true, false, VK_LEFT), false);
-	setCommand(7, TEXT("Fast Forward"), playerFF, (new ShortcutKey)->set(true, true, false, VK_RIGHT), false);
-	setCommand(8, TEXT("Move line to current time"), gotoCurrentLine, (new ShortcutKey)->set(false, false, false, VK_F7), false);
-	setCommand(9, TEXT("---"), NULL, NULL, false);
-	setCommand(10, TEXT("Add template"), addTemplate, NULL, false);
-	setCommand(11, TEXT("Make SRT"), makeSRT, NULL, false);
-	setCommand(12, TEXT("Make ASS"), makeASS, NULL, false);
+	setCommand(4, TEXT("Reopen file"), playerClose, (new ShortcutKey)->set(true, true, false, 'O'), false);
+	setCommand(5, TEXT("Play/Pause"), playerPlayPause, (new ShortcutKey)->set(false, false, false, VK_F9), false);
+	setCommand(6, TEXT("Go to current line"), playerJumpTo, (new ShortcutKey)->set(false, false, false, VK_F8), false);
+	setCommand(7, TEXT("Rewind"), playerRew, (new ShortcutKey)->set(true, true, false, VK_LEFT), false);
+	setCommand(8, TEXT("Fast Forward"), playerFF, (new ShortcutKey)->set(true, true, false, VK_RIGHT), false);
+	setCommand(9, TEXT("Move line to current time"), gotoCurrentLine, (new ShortcutKey)->set(false, false, false, VK_F7), false);
+	setCommand(10, TEXT("---"), NULL, NULL, false);
+	setCommand(11, TEXT("Add template"), addTemplate, NULL, false);
+	setCommand(12, TEXT("Make SRT"), makeSRT, NULL, false);
+	setCommand(13, TEXT("Make ASS"), makeASS, NULL, false);
 }
 
 //
@@ -253,6 +254,7 @@ void tryOpenMedia() {
 		if (hList != INVALID_HANDLE_VALUE) {
 			do {
 				if (!(file.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+					wcslwr(file.cFileName);
 					pos = wcsrchr(file.cFileName, L'.');
 					if (pos != NULL) {
 						pos++;
@@ -279,7 +281,7 @@ void tryOpenMedia() {
 		ofn.lpstrFile = szFile;
 		ofn.nMaxFile = sizeof(szFile);
 		ofn.lpstrFilter = TEXT("All Video\0*.3G2;*.3GP;*.3GP2;*.3GPP;*.AMV;*.ASF;*.AVI;*.AVS;*.DIVX;*.EVO;*.F4V;*.FLV;*.GVI;*.HDMOV;*.IFO;*.K3G;*.M2T;*.M2TS;*.MKV;*.MK3D;*.MOV;*.MP2V;*.MP4;*.MPE;*.MPEG;*.MPG;*.MPV2;*.MQV;*.MTS;*.MTV;*.NSV;*.OGM;*.OGV;*.QT;*.RM;*.RMVB;*.RV;*.SKM;*.TP;*.TPR;*.TS;*.VOB;*.WEBM;*.WM;*.WMP;*.WMV\0All Audio\0*.A52;*.AAC;*.AC3;*.AIF;*.AIFC;*.AIFF;*.ALAC;*.AMR;*.APE;*.AU;*.CDA;*.DTS;*.FLA;*.FLAC;*.M1A;*.M2A;*.M4A;*.M4B;*.M4P;*.MID;*.MKA;*.MP1;*.MP2;*.MP3;*.MPA;*.MPC;*.MPP;*.MP+;*.NSA;*.OFR;*.OFS;*.OGA;*.OGG;*.RA;*.SND;*.SPX;*.TTA;*.WAV;*.WAVE;*.WMA;*.WV\0All Media\0*.3G2;*.3GP;*.3GP2;*.3GPP;*.AMV;*.ASF;*.AVI;*.AVS;*.DIVX;*.EVO;*.F4V;*.FLV;*.GVI;*.HDMOV;*.IFO;*.K3G;*.M2T;*.M2TS;*.MKV;*.MK3D;*.MOV;*.MP2V;*.MP4;*.MPE;*.MPEG;*.MPG;*.MPV2;*.MQV;*.MTS;*.MTV;*.NSV;*.OGM;*.OGV;*.QT;*.RM;*.RMVB;*.RV;*.SKM;*.TP;*.TPR;*.TS;*.VOB;*.WEBM;*.WM;*.WMP;*.WMV;*.A52;*.AAC;*.AC3;*.AIF;*.AIFC;*.AIFF;*.ALAC;*.AMR;*.APE;*.AU;*.CDA;*.DTS;*.FLA;*.FLAC;*.M1A;*.M2A;*.M4A;*.M4B;*.M4P;*.MID;*.MKA;*.MP1;*.MP2;*.MP3;*.MPA;*.MPC;*.MPP;*.MP+;*.NSA;*.OFR;*.OFS;*.OGA;*.OGG;*.RA;*.SND;*.SPX;*.TTA;*.WAV;*.WAVE;*.WMA;*.WV\0All Files\0*.*\0");
-		ofn.nFilterIndex = 1;
+		ofn.nFilterIndex = 3;
 		ofn.lpstrFileTitle = NULL;
 		ofn.nMaxFileTitle = 0;
 		::SendMessage(nppData._nppHandle, NPPM_GETCURRENTDIRECTORY, sizeof(basepath), (WPARAM)basepath);
@@ -291,9 +293,7 @@ void tryOpenMedia() {
 	if (szFile[0] == NULL)
 		return;
 	if (bUseDockedPlayer) {
-		if (dockedPlayer.State() != PlaybackState::STATE_NO_GRAPH && wcscmp(dockedPlayer.GetFileName(), szFile) == 0)
-			return;
-		dockedPlayer.TearDownGraph();
+		dockedPlayer.CloseFile();
 		dockedPlayer.OpenFile(szFile);
 		dockedPlayer.display(true);
 	} else {
@@ -312,6 +312,14 @@ void tryOpenMedia() {
 	}
 }
 
+void playerClose() {
+	if (dockedPlayer.State() == PlaybackState::STATE_RUNNING) {
+		playerPlayPause();
+		Sleep(50);
+	}
+	tryOpenMedia();
+}
+
 void insertSubtitleCode() {
 	// Get the current scintilla
 	int which = -1;
@@ -320,7 +328,7 @@ void insertSubtitleCode() {
 	if (which == -1)
 		return;
 
-	int time = bUseDockedPlayer ? (int)dockedPlayer.GetTime() : getMpcHcTime();
+	int time = bUseDockedPlayer ? (int)(dockedPlayer.GetTime()*1000) : getMpcHcTime();
 
 	if (time == -1) {
 		tryOpenMedia();
@@ -371,7 +379,7 @@ void insertSubtitleCodeEmpty() {
 	if (which == -1)
 		return;
 
-	int time = bUseDockedPlayer ? (int)dockedPlayer.GetTime() : getMpcHcTime();
+	int time = bUseDockedPlayer ? (int)(dockedPlayer.GetTime() * 1000) : getMpcHcTime();
 
 	if (time == -1) {
 		tryOpenMedia();
@@ -410,10 +418,10 @@ void playerJumpTo() {
 		std::string subject(sync);
 		if (std::regex_search(subject, match, syncmatcher) && match.size() > 1) {
 			if (bUseDockedPlayer) {
-				if (dockedPlayer.State() == PlaybackState::STATE_NO_GRAPH)
+				if (dockedPlayer.State() == PlaybackState::STATE_CLOSED)
 					tryOpenMedia();
 				else
-					dockedPlayer.SetTime(atoi(match.str(2).c_str()));
+					dockedPlayer.SetTime(atoi(match.str(2).c_str()) / 1000.);
 			} else {
 				if (0 != seekMpcHc(atoi(match.str(2).c_str())))
 					tryOpenMedia();
@@ -431,7 +439,7 @@ void gotoCurrentLine() {
 		return;
 	HWND curScintilla = (which == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
 
-	int time = bUseDockedPlayer ? (int)dockedPlayer.GetTime() : getMpcHcTime();
+	int time = bUseDockedPlayer ? (int)(dockedPlayer.GetTime() * 1000) : getMpcHcTime();
 
 	if (time == -1) {
 		tryOpenMedia();
@@ -459,13 +467,12 @@ void gotoCurrentLine() {
 void playerPlayPause() {
 	if (bUseDockedPlayer) {
 		switch (dockedPlayer.State()) {
-			case PlaybackState::STATE_NO_GRAPH:
+			case PlaybackState::STATE_CLOSED:
 				tryOpenMedia();
 				break;
 			case PlaybackState::STATE_RUNNING:
 				dockedPlayer.Pause();
 				break;
-			case PlaybackState::STATE_STOPPED:
 			case PlaybackState::STATE_PAUSED:
 				dockedPlayer.Play();
 				break;
@@ -481,7 +488,7 @@ void playerRew() {
 		if (dockedPlayer.isClosed())
 			tryOpenMedia();
 		else {
-			dockedPlayer.SetTime(dockedPlayer.GetTime() - 3000);
+			dockedPlayer.SetTime(dockedPlayer.GetTime() - 3);
 			dockedPlayer.Play();
 		}
 	} else {
@@ -497,7 +504,7 @@ void playerFF() {
 		if (dockedPlayer.isClosed())
 			tryOpenMedia();
 		else {
-			dockedPlayer.SetTime(dockedPlayer.GetTime() + 3000);
+			dockedPlayer.SetTime(dockedPlayer.GetTime() + 3);
 			dockedPlayer.Play();
 		}
 	} else {

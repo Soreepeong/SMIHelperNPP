@@ -1,7 +1,10 @@
 #pragma once
 #include "DockingFeature/DockingDlgInterface.h"
 #include "resource.h"
-#include <dshow.h>
+#include "ffms2/ffms.h"
+#include<Audioclient.h>
+#include<Mmdeviceapi.h>
+#include<Endpointvolume.h>
 
 class CVideoRenderer;
 
@@ -12,10 +15,10 @@ typedef void (CALLBACK *GraphEventFN)(HWND hwnd, long eventCode, LONG_PTR param1
 
 enum PlaybackState
 {
-	STATE_NO_GRAPH,
+	STATE_CLOSED,
+	STATE_OPENING,
 	STATE_RUNNING,
-	STATE_PAUSED,
-	STATE_STOPPED,
+	STATE_PAUSED
 };
 
 class DockedPlayer: public DockingDlgInterface
@@ -29,28 +32,21 @@ public:
 	};
 
 
-	PlaybackState State() const { return m_state; }
+	PlaybackState State() const { return mState; }
 
 	HRESULT OpenFile(PCWSTR pszFileName);
-	void    TearDownGraph();
-	const TCHAR* GetFileName() const { return m_currentFile; };
+	void    CloseFile();
 
 	HRESULT Play();
 	HRESULT Pause();
-	HRESULT Stop();
 
 	bool	IsFocused() const { return m_focused; };
 
-	LONGLONG	GetLength() const;
-	LONGLONG	GetTime();
-	HRESULT		SetTime(LONGLONG time);
+	double	GetLength() const;
+	double	GetTime();
+	HRESULT	SetTime(double time);
 
 	BOOL    HasVideo() const;
-	HRESULT UpdateVideoWindow(const LPRECT prc);
-	HRESULT Repaint(HDC hdc);
-	HRESULT DisplayModeChanged();
-
-	HRESULT HandleGraphEvent(GraphEventFN pfnOnGraphEvent);
 
 protected:
 	virtual BOOL CALLBACK run_dlgProc(UINT message, WPARAM wParam, LPARAM lParam);
@@ -58,22 +54,36 @@ protected:
 private:
 	HWND m_slider;
 
-	long m_videoWidth, m_videoHeight;
+	RECT mVideoRect;
+	BITMAPINFO mVideoBitmapInfo = { 0 };
 	long m_clientTop;
-	bool isVideo;
 	bool m_focused;
 
-	HRESULT InitializeGraph();
-	HRESULT CreateVideoRenderer();
-	HRESULT RenderStreams(IBaseFilter *pSource);
+	HANDLE				mFFLoader = INVALID_HANDLE_VALUE;
+	FFMS_Indexer		*mFFIndexer;
+	FFMS_VideoSource	*mFFV;
+	FFMS_AudioSource	*mFFA;
+	int					mFrameIndex;
+	const FFMS_Frame	*mFrame;
+	FFMS_Track			*mVideoTrack;
+	const FFMS_FrameInfo	*mFrameInfo;
+	const FFMS_VideoProperties	*mFFVP;
+	const FFMS_AudioProperties	*mFFAP;
 
-	PlaybackState   m_state;
+	WAVEFORMATEX		pwfx = { 0 };
+	IMMDevice			*pDevice = NULL;
+	IAudioClient		*pAudioClient = NULL;
+	IAudioRenderClient	*pRenderClient = NULL;
+	bool				mPlayResetSync;
+	CRITICAL_SECTION	mDecoderSync;
+	HANDLE				mDecodeWait;
+	HANDLE				mRenderer = INVALID_HANDLE_VALUE;
 
-	TCHAR			*m_currentFile;
-	IGraphBuilder   *m_pGraph;
-	IMediaControl   *m_pControl;
-	IMediaSeeking	*m_pSeeking;
-	IMediaEventEx   *m_pEvent;
-	CVideoRenderer  *m_pVideo;
+	void OpenFileInternal(TCHAR *u16, char *u8, TCHAR *iu16, char *iu8);
+	static DWORD WINAPI OpenFileExternal(PVOID ptr);
+	void RendererInternal();
+	static DWORD WINAPI RendererExternal(PVOID ptr);
+
+	PlaybackState   mState = STATE_CLOSED;
 };
 
