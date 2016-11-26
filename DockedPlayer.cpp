@@ -246,10 +246,13 @@ void DockedPlayer::RendererInternal() {
 			InvalidateRect(getHSelf(), &mVideoRect, false);
 			if (mState == PlaybackState::STATE_RUNNING && sampc != 0) {
 				BYTE *pData;
-				//*
-				pRenderClient->GetBuffer(sampc, &pData);
-				FFMS_GetAudio(mFFA, pData, mFFAP->NumSamples * mFrameIndex / mFFVP->NumFrames, sampc, &errinfo);
-				pRenderClient->ReleaseBuffer(sampc, NULL);
+				UINT32  pad;
+				pAudioClient->GetCurrentPadding(&pad);
+				if (pad == 0) {
+					pRenderClient->GetBuffer(sampc, &pData);
+					FFMS_GetAudio(mFFA, pData, mFFAP->NumSamples * mFrameIndex / mFFVP->NumFrames, sampc, &errinfo);
+					pRenderClient->ReleaseBuffer(sampc, NULL);
+				}
 				//*/
 			}
 		}
@@ -262,12 +265,12 @@ void DockedPlayer::RendererInternal() {
 					break;
 				Sleep(10);
 			}
-			mFrameIndex++;
+			
 			QueryPerformanceCounter(&EndingTime);
 			int dec = (int)((EndingTime.QuadPart - StartingTime.QuadPart) * 1000 / Frequency.QuadPart);
 			EnterCriticalSection(&mDecoderSync);
 			if(dec > mFrameInfo->PTS*base->Num / (double)base->Den - mPlayStart && mFrameIndex + 1 < mFFVP->NumFrames && !mPlayResetSync)
-				mFrameInfo = FFMS_GetFrameInfo(mVideoTrack, ++mFrameIndex);
+				mFrameIndex++;
 			LeaveCriticalSection(&mDecoderSync);
 		} else {
 			WaitForSingleObject(mDecodeWait, INFINITE);

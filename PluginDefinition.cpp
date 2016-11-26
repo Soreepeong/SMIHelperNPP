@@ -192,6 +192,8 @@ void commandMenuInit() {
 	setCommand(11, TEXT("Add template"), addTemplate, NULL, false);
 	setCommand(12, TEXT("Make SRT"), makeSRT, NULL, false);
 	setCommand(13, TEXT("Make ASS"), makeASS, NULL, false);
+	if (!bUseDockedPlayer)
+		useDockedPlayer();
 }
 
 //
