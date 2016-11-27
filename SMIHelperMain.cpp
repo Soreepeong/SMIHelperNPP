@@ -67,6 +67,23 @@ extern "C" __declspec(dllexport) LRESULT messageProc(UINT Message, WPARAM wParam
 	if (Message == NPPM_MSGTOPLUGIN) {
 		HandleMessages(lParam);
 		return false;
+	} else if (Message == WM_SIZE) {
+		int n = SendMessage(nppData._nppHandle, NPPM_GETNBOPENFILES, 0, ALL_OPEN_FILES);
+		if (n > 0) {
+			TCHAR** files = new TCHAR*[n];
+			for (int i = 0; i < n; i++)
+				files[i] = new TCHAR[2048];
+			SendMessage(nppData._nppHandle, NPPM_GETOPENFILENAMES, (WPARAM)files, n);
+			std::vector<std::wstring> filenames;
+			for (int i = 0; i < n; i++)
+				filenames.push_back(std::wstring(files[i]));
+			SendMessage(nppData._nppHandle, NPPM_GETFULLCURRENTPATH, 2048, (LPARAM)files[0]);
+			std::wstring current(files[0]);
+			onTabChanged(current, filenames);
+			for (int i = 0; i < n; i++)
+				delete[] files[i];
+			delete files;
+		}
 	}
 	return TRUE;
 }

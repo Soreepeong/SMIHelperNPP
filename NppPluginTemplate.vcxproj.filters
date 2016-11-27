@@ -48,6 +48,9 @@
     <ClCompile Include="DockedPlayer.cpp">
       <Filter>Player</Filter>
     </ClCompile>
+    <ClCompile Include="DockedPlayer_Media.cpp">
+      <Filter>Player</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="PluginDefinition.h">

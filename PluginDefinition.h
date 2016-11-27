@@ -30,6 +30,8 @@ bool setCommand(size_t index, TCHAR *cmdName, PFUNCPLUGINCMD pFunc, ShortcutKey 
 
 DWORD WINAPI HandleMessages(LPARAM lParam);
 
+void onTabChanged(std::wstring selection, std::vector<std::wstring> &newlist);
+
 //
 // Your plugin command functions
 //

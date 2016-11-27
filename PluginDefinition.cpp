@@ -31,14 +31,7 @@ const TCHAR sectionName[] = TEXT("SMIHelper");
 const TCHAR KEY_USE_DOCKED_PLAYER[] = TEXT("useDockedPlayer");
 const TCHAR configFileName[] = TEXT("SMIHelper.ini");
 
-//
-// The plugin data that Notepad++ needs
-//
 FuncItem funcItem[nbFunc];
-
-//
-// The data of Notepad++ that you can use in your plugin commands
-//
 NppData nppData;
 
 bool isSMIfile() {
@@ -98,7 +91,7 @@ DWORD WINAPI HandleMessages(LPARAM lParam) {
 }
 
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
-	if (GetForegroundWindow() == nppData._nppHandle && nCode == HC_ACTION) {
+	if ((GetForegroundWindow() == nppData._nppHandle || dockedPlayer.IsFocused()) && nCode == HC_ACTION) {
 		if (isSMIfile()) {
 			switch (wParam) {
 				case WM_KEYDOWN:
@@ -149,9 +142,6 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 }
 HHOOK hhkLowLevelKybd;
 
-//
-// Initialize your plugin data here
-// It will be called while plugin loading   
 void pluginInit(HANDLE hModule) {
 	WSADATA w;
 	WSAStartup((MAKEWORD(2, 2)), &w);
@@ -162,10 +152,6 @@ void pluginInit(HANDLE hModule) {
 
 	dockedPlayer.init((HINSTANCE)hModule, NULL);
 }
-
-//
-// Here you can do the clean up, save the parameters (if any) for the next session
-//
 void pluginCleanUp() {
 	TCHAR kc[3];
 	int k = (bUseDockedPlayer ? 1 : 0) | (dockedPlayer.isClosed() ? 0 : 2);
@@ -207,20 +193,12 @@ void commandMenuInit() {
 	if (!bUseDockedPlayer)
 		useDockedPlayer();
 }
-
-//
-// Here you can do the clean up (especially for the shortcut)
-//
 void commandMenuCleanUp() {
-	// Don't forget to deallocate your shortcut here
 	for (int i = 0; i < nbFunc; i++)
 		delete funcItem[i]._pShKey;
 }
 
 
-//
-// This function help you to initialize your plugin commands
-//
 bool setCommand(size_t index, TCHAR *cmdName, PFUNCPLUGINCMD pFunc, ShortcutKey *sk, int check0nInit) {
 	if (index >= nbFunc)
 		return false;
@@ -236,9 +214,14 @@ bool setCommand(size_t index, TCHAR *cmdName, PFUNCPLUGINCMD pFunc, ShortcutKey 
 	return true;
 }
 
-//----------------------------------------------//
-//-- STEP 4. DEFINE YOUR ASSOCIATED FUNCTIONS --//
-//----------------------------------------------//
+void onTabChanged(std::wstring selection, std::vector<std::wstring> &newlist) {
+	std::vector<std::wstring> &openfiles = dockedPlayer.GetOpenIds();
+	for (std::vector<std::wstring>::iterator i = openfiles.begin(); i != openfiles.end(); ++i) {
+		if (std::find(newlist.begin(), newlist.end(), *i) == newlist.end())
+			dockedPlayer.CloseTab(*i);
+	}
+	dockedPlayer.SetTab(selection);
+}
 
 void tryOpenMedia() {
 	TCHAR szFile[MAX_PATH] = { 0, };
@@ -307,7 +290,6 @@ void tryOpenMedia() {
 	if (szFile[0] == NULL)
 		return;
 	if (bUseDockedPlayer) {
-		dockedPlayer.CloseFile();
 		dockedPlayer.OpenFile(szFile);
 		dockedPlayer.display(true);
 	} else {
@@ -327,7 +309,8 @@ void tryOpenMedia() {
 }
 
 void playerClose() {
-	if (dockedPlayer.State() == PlaybackState::STATE_RUNNING) {
+	if (dockedPlayer.GetMedia() != NULL && 
+		dockedPlayer.GetMedia()->State() == PlaybackState::STATE_RUNNING) {
 		playerPlayPause();
 		Sleep(50);
 	}
@@ -342,7 +325,7 @@ void insertSubtitleCode() {
 	if (which == -1)
 		return;
 
-	int time = bUseDockedPlayer ? (int)(dockedPlayer.GetTime()*1000) : getMpcHcTime();
+	int time = bUseDockedPlayer ? (dockedPlayer.GetMedia() == NULL ? -1 : (int)(dockedPlayer.GetMedia()->GetTime() * 1000)) : getMpcHcTime();
 
 	if (time == -1) {
 		tryOpenMedia();
@@ -393,7 +376,7 @@ void insertSubtitleCodeEmpty() {
 	if (which == -1)
 		return;
 
-	int time = bUseDockedPlayer ? (int)(dockedPlayer.GetTime() * 1000) : getMpcHcTime();
+	int time = bUseDockedPlayer ? (dockedPlayer.GetMedia() == NULL ? -1 : (int)(dockedPlayer.GetMedia()->GetTime() * 1000)) : getMpcHcTime();
 
 	if (time == -1) {
 		tryOpenMedia();
@@ -432,10 +415,10 @@ void playerJumpTo() {
 		std::string subject(sync);
 		if (std::regex_search(subject, match, syncmatcher) && match.size() > 1) {
 			if (bUseDockedPlayer) {
-				if (dockedPlayer.State() == PlaybackState::STATE_CLOSED)
+				if (dockedPlayer.GetMedia() == NULL)
 					tryOpenMedia();
 				else
-					dockedPlayer.SetTime(atoi(match.str(2).c_str()) / 1000.);
+					dockedPlayer.GetMedia()->SetTime(atoi(match.str(2).c_str()) / 1000.);
 			} else {
 				if (0 != seekMpcHc(atoi(match.str(2).c_str())))
 					tryOpenMedia();
@@ -453,7 +436,7 @@ void gotoCurrentLine() {
 		return;
 	HWND curScintilla = (which == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
 
-	int time = bUseDockedPlayer ? (int)(dockedPlayer.GetTime() * 1000) : getMpcHcTime();
+	int time = bUseDockedPlayer ? (dockedPlayer.GetMedia() == NULL ? -1 : (int)(dockedPlayer.GetMedia()->GetTime() * 1000)) : getMpcHcTime();
 
 	if (time == -1) {
 		tryOpenMedia();
@@ -480,17 +463,21 @@ void gotoCurrentLine() {
 
 void playerPlayPause() {
 	if (bUseDockedPlayer) {
-		switch (dockedPlayer.State()) {
-			case PlaybackState::STATE_CLOSED:
-				tryOpenMedia();
-				break;
-			case PlaybackState::STATE_RUNNING:
-				dockedPlayer.Pause();
-				break;
-			case PlaybackState::STATE_PAUSED:
-				dockedPlayer.Play();
-				break;
-		}
+		if (dockedPlayer.GetMedia() == NULL)
+			tryOpenMedia();
+		else
+			switch (dockedPlayer.GetMedia()->State()) {
+				case PlaybackState::STATE_RUNNING:
+					dockedPlayer.GetMedia()->Pause();
+					break;
+				case PlaybackState::STATE_PAUSED:
+					dockedPlayer.GetMedia()->Play();
+					break;
+				case PlaybackState::STATE_OPENING:
+					break;
+				default:
+					tryOpenMedia();
+			}
 	} else {
 		if (0 != sendMpcHcCommand(889))
 			tryOpenMedia();
@@ -499,10 +486,10 @@ void playerPlayPause() {
 
 void playerPlayRange() {
 	if (bUseDockedPlayer) {
-		switch (dockedPlayer.State()) {
-			case PlaybackState::STATE_CLOSED:
-				tryOpenMedia();
-				break;
+		if (dockedPlayer.GetMedia() == NULL)
+			tryOpenMedia();
+		else
+			switch (dockedPlayer.GetMedia()->State()) {
 			case PlaybackState::STATE_PAUSED:
 			case PlaybackState::STATE_RUNNING: {
 				int which = -1;
@@ -541,15 +528,19 @@ void playerPlayRange() {
 					}
 				}
 				if (s1 >= 0 && s2 >= 0) {
-					dockedPlayer.Pause();
-					dockedPlayer.PlayRange(s1, s2);
+					dockedPlayer.GetMedia()->Pause();
+					dockedPlayer.GetMedia()->PlayRange(s1, s2);
 				} else if (s1 >= 0) {
-					dockedPlayer.Pause();
-					dockedPlayer.SetTime(s1);
-					dockedPlayer.Play();
+					dockedPlayer.GetMedia()->Pause();
+					dockedPlayer.GetMedia()->SetTime(s1);
+					dockedPlayer.GetMedia()->Play();
 				}
 				break;
 			}
+			case PlaybackState::STATE_OPENING:
+				break;
+			default:
+				tryOpenMedia();
 		}
 	} else {
 		playerPlayPause();
@@ -558,11 +549,11 @@ void playerPlayRange() {
 
 void playerRew() {
 	if (bUseDockedPlayer) {
-		if (dockedPlayer.isClosed())
+		if (dockedPlayer.GetMedia() == NULL || dockedPlayer.GetMedia()->State() == PlaybackState::STATE_ERROR)
 			tryOpenMedia();
 		else {
-			dockedPlayer.SetTime(dockedPlayer.GetTime() - 3);
-			dockedPlayer.Play();
+			dockedPlayer.GetMedia()->SetTime(dockedPlayer.GetMedia()->GetTime() - 3);
+			dockedPlayer.GetMedia()->Play();
 		}
 	} else {
 		if (0 != seekMpcHc(getMpcHcTime() - 3000))
@@ -574,11 +565,11 @@ void playerRew() {
 
 void playerRewFrame() {
 	if (bUseDockedPlayer) {
-		if (dockedPlayer.isClosed())
+		if (dockedPlayer.GetMedia() == NULL || dockedPlayer.GetMedia()->State() == PlaybackState::STATE_ERROR)
 			tryOpenMedia();
 		else {
-			dockedPlayer.Pause();
-			dockedPlayer.SetFrame(dockedPlayer.GetFrame() - 1);
+			dockedPlayer.GetMedia()->Pause();
+			dockedPlayer.GetMedia()->SetFrameIndex(dockedPlayer.GetMedia()->GetFrameIndex() - 1);
 		}
 	} else {
 		if (0 != sendMpcHcCommand(891))
@@ -588,11 +579,11 @@ void playerRewFrame() {
 
 void playerFF() {
 	if (bUseDockedPlayer) {
-		if (dockedPlayer.isClosed())
+		if (dockedPlayer.GetMedia() == NULL || dockedPlayer.GetMedia()->State() == PlaybackState::STATE_ERROR)
 			tryOpenMedia();
 		else {
-			dockedPlayer.SetTime(dockedPlayer.GetTime() + 3);
-			dockedPlayer.Play();
+			dockedPlayer.GetMedia()->SetTime(dockedPlayer.GetMedia()->GetTime() + 3);
+			dockedPlayer.GetMedia()->Play();
 		}
 	} else {
 		if (0 != seekMpcHc(getMpcHcTime() + 3000))
@@ -604,11 +595,11 @@ void playerFF() {
 
 void playerFFFrame() {
 	if (bUseDockedPlayer) {
-		if (dockedPlayer.isClosed())
+		if (dockedPlayer.GetMedia() == NULL || dockedPlayer.GetMedia()->State() == PlaybackState::STATE_ERROR)
 			tryOpenMedia();
 		else {
-			dockedPlayer.Pause();
-			dockedPlayer.SetFrame(dockedPlayer.GetFrame() + 1);
+			dockedPlayer.GetMedia()->Pause();
+			dockedPlayer.GetMedia()->SetFrameIndex(dockedPlayer.GetMedia()->GetFrameIndex() + 1);
 		}
 	} else {
 		if (0 != sendMpcHcCommand(892))

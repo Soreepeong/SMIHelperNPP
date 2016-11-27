@@ -104,6 +104,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="DockedPlayer.cpp" />
+    <ClCompile Include="DockedPlayer_Media.cpp" />
     <ClCompile Include="DockingFeature\StaticDialog.cpp" />
     <ClCompile Include="entities.cpp" />
     <ClCompile Include="MpcHcRemote.cpp" />
