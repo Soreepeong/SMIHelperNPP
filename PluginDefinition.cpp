@@ -58,13 +58,13 @@ DWORD WINAPI HandleMessages(LPARAM lParam) {
 		case VK_F8: playerJumpTo(); break;
 		case VK_F7: gotoCurrentLine(); break;
 		case VK_LEFT:
-			if (GetAsyncKeyState(VK_CONTROL))
+			if (GetAsyncKeyState(VK_CONTROL) && dockedPlayer.IsFocused())
 				playerRewFrame();
 			else
 				playerRew();
 			break;
 		case VK_RIGHT:
-			if (GetAsyncKeyState(VK_CONTROL))
+			if (GetAsyncKeyState(VK_CONTROL) && dockedPlayer.IsFocused())
 				playerFFFrame();
 			else
 				playerFF();

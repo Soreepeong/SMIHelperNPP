@@ -2,16 +2,8 @@
 #include "DockingFeature/DockingDlgInterface.h"
 #include "resource.h"
 #include "ffms2/ffms.h"
-#include<Audioclient.h>
-#include<Mmdeviceapi.h>
-#include<Endpointvolume.h>
-
-class CVideoRenderer;
-
-typedef void (CALLBACK *GraphEventFN)(HWND hwnd, long eventCode, LONG_PTR param1, LONG_PTR param2);
-
-
-// https://msdn.microsoft.com/en-us/library/windows/desktop/ff625879(v=vs.85).aspx
+#include<Mmsystem.h>
+#include<Mmreg.h>
 
 enum PlaybackState
 {
@@ -87,10 +79,8 @@ private:
 	const FFMS_VideoProperties	*mFFVP;
 	const FFMS_AudioProperties	*mFFAP;
 
-	WAVEFORMATEX		pwfx = { 0 };
-	IMMDevice			*pDevice = NULL;
-	IAudioClient		*pAudioClient = NULL;
-	IAudioRenderClient	*pRenderClient = NULL;
+	WAVEFORMATEX		mWaveFormat = { 0 };
+	HWAVEOUT			mWaveOut;
 	UINT64				mPlayStartPos;
 	int					mVideoEndFrameIndex;
 	UINT64				mAudioStartFrameIndex, mAudioEndFrameIndex;
