@@ -72,7 +72,7 @@ void DockedPlayer::OnSizeRequested(DockedPlayer::Media *media) {
 void DockedPlayer::UpdateFrame(DockedPlayer::Media *media) {
 	if (mMedia.count(mCurrentTab) == 0 || mMedia[mCurrentTab] != media)
 		return;
-	InvalidateRect(getHSelf(), &mVideoRect, false);
+	InvalidateRect(getHSelf(), NULL, false);
 }
 
 void DockedPlayer::SetTrackbarPosition(DockedPlayer::Media *media, int position) {
@@ -84,7 +84,7 @@ void DockedPlayer::SetTrackbarPosition(DockedPlayer::Media *media, int position)
 void DockedPlayer::StartTrackbarUpdate(DockedPlayer::Media *media) {
 	if (mMedia.count(mCurrentTab) == 0 || mMedia[mCurrentTab] != media)
 		return;
-	SetTimer(getHSelf(), TRACKBAR_TIMER, 250, NULL);
+	SetTimer(getHSelf(), TRACKBAR_TIMER, 50, NULL);
 }
 
 void DockedPlayer::StopTrackbarUpdate(DockedPlayer::Media *media) {
@@ -120,9 +120,17 @@ BOOL CALLBACK DockedPlayer::run_dlgProc(UINT message, WPARAM wParam, LPARAM lPar
 		}
 		case WM_TIMER: {
 			if (wParam == TRACKBAR_TIMER) {
-				if (mMedia.count(mCurrentTab) > 0)
+				if (mMedia.count(mCurrentTab) > 0) {
 					SendMessage(mControls.mPlaybackSlider, TBM_SETPOS, TRUE,
 						(int)(mMedia[mCurrentTab]->GetTime()*mProgressMax / mMedia[mCurrentTab]->GetLength()));
+					RECT rc;
+					GetClientRect(mControls.mPlaybackSlider, &rc);
+					rc.left = 10;
+					rc.right -= 10;
+					rc.top = mVideoRect.bottom + rc.bottom + 10;
+					rc.bottom = rc.top + 200;
+					InvalidateRect(getHSelf(), &rc, false);
+				}
 			}
 			break;
 		}
@@ -183,6 +191,9 @@ BOOL CALLBACK DockedPlayer::run_dlgProc(UINT message, WPARAM wParam, LPARAM lPar
 
 			hdc = BeginPaint(getHSelf(), &ps);
 
+			HFONT font = (HFONT)SelectObject(hdc, CreateFont(15, 0, 0, 0, 400, false, false, false, DEFAULT_CHARSET, OUT_OUTLINE_PRECIS,
+				CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, VARIABLE_PITCH, TEXT("Segoe UI")));
+
 			if (mMedia.count(mCurrentTab) > 0) {
 				Media *media = mMedia[mCurrentTab];
 				if (media->State() != STATE_CLOSED && media->HasVideo()) {
@@ -195,17 +206,30 @@ BOOL CALLBACK DockedPlayer::run_dlgProc(UINT message, WPARAM wParam, LPARAM lPar
 						StretchDIBits(hdc, 0, mVideoRect.bottom, self.right, -mVideoRect.bottom, 
 							0, 0, bh.biWidth, bh.biHeight,
 							frame->Data[0], &binfo, DIB_RGB_COLORS, SRCCOPY);
-						double t = media->GetTime();
-						if (t < 0) t = 0;
-						TCHAR msg[1024];
-						wsprintf(msg, L"%06I64d %02d:%02d:%02d.%03d", 
-							media->GetFrameIndex(), 
-							(int)(t / 3600), (int)(t / 60) % 60, (int)(t) % 60, (int)(t * 1000) % 1000);
-						TextOut(hdc, 10, 10, msg, wcslen(msg));
 					}
 				}
 				self.top = mVideoRect.bottom;
-				FillRect(hdc, &self, (HBRUSH)(COLOR_WINDOW + 1));
+
+				{
+					const FFMS_Frame* frame = media->HasVideo() ? media->GetFrame() : NULL;
+					double t = media->GetTime();
+					if (t < 0) t = 0;
+					double t2 = media->GetLength();
+					if (t2 < 0) t2 = 0;
+					TCHAR msg[1024];
+					GetClientRect(mControls.mPlaybackSlider, &rc);
+					rc.left = 10;
+					rc.right -= 10;
+					rc.top = mVideoRect.bottom + rc.bottom + 10;
+					rc.bottom = rc.top + 600;
+					wsprintf(msg, L"          %s%I64d/%I64d\n"
+						"%02d:%02d:%02d.%03d/%02d:%02d:%02d.%03d",
+						frame == NULL || !frame->KeyFrame ? L"" : L"[K] ",
+						media->GetFrameIndex(), media->GetFrameCount(),
+						(int)(t / 3600), (int)(t / 60) % 60, (int)(t) % 60, (int)(t * 1000) % 1000,
+						(int)(t2 / 3600), (int)(t2 / 60) % 60, (int)(t2) % 60, (int)(t2 * 1000) % 1000);
+					DrawText(hdc, msg, wcslen(msg), &rc, DT_RIGHT | DT_EXTERNALLEADING | DT_WORDBREAK);
+				}
 				if (m_focused) {
 					TCHAR *msg = L""
 						"Left: -3 sec\n"
@@ -216,10 +240,6 @@ BOOL CALLBACK DockedPlayer::run_dlgProc(UINT message, WPARAM wParam, LPARAM lPar
 						"Z, Num0: Undo\n"
 						"X, Up: Insert timecode\n"
 						"C, Down: Insert stop timecode";
-					GetClientRect(mControls.mPlaybackSlider, &rc);
-					rc.left = 10;
-					rc.right -= 10;
-					rc.top = mVideoRect.bottom + rc.bottom + 10;
 					if (media->State() == PlaybackState::STATE_ERROR) {
 						const char* err = media->GetErrorMsg();
 						TextOutA(hdc, rc.left, rc.top, err, strlen(err));
@@ -230,6 +250,7 @@ BOOL CALLBACK DockedPlayer::run_dlgProc(UINT message, WPARAM wParam, LPARAM lPar
 				}
 			}
 
+			DeleteObject(SelectObject(hdc, font));
 			EndPaint(getHSelf(), &ps);
 
 			return true;

@@ -364,7 +364,8 @@ void insertSubtitleCode() {
 		::SendMessage(curScintilla, SCI_ADDTEXT, 2, (LPARAM)"\r\n");
 	} else
 		::SendMessage(curScintilla, SCI_GOTOLINE, curLine + 1, 0);
-	::SendMessage(curScintilla, SCI_LINESCROLL, 0, 1);
+	if(!replaced)
+		::SendMessage(curScintilla, SCI_LINESCROLL, 0, 1);
 	::SendMessage(curScintilla, SCI_ENDUNDOACTION, 0, 0);
 	LockWindowUpdate(NULL);
 }

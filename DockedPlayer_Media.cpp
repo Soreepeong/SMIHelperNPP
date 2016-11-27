@@ -123,17 +123,21 @@ void DockedPlayer::Media::OpenFileInternal(TCHAR *u16, char *u8, TCHAR *iu16, ch
 		pixfmts[0] = FFMS_GetPixFmt("bgra");
 		pixfmts[1] = -1;
 		mVideoFrameIndex = 0;
-		if ((mFFV = FFMS_CreateVideoSource(u8, vidId, index, 1, FFMS_SEEK_NORMAL, &errinfo)) == NULL) goto done;
-		mFFVP = FFMS_GetVideoProperties(mFFV);
-		if ((mFrame = FFMS_GetFrame(mFFV, mVideoFrameIndex, &errinfo)) == NULL) goto done;
-		mVideoTrack = FFMS_GetTrackFromVideo(mFFV);
-		if ((FFMS_SetOutputFormatV2(mFFV, pixfmts,
-			mFrame->ScaledWidth == -1 ? mFrame->EncodedWidth : mFrame->ScaledWidth,
-			mFrame->ScaledHeight == -1 ? mFrame->EncodedHeight : mFrame->ScaledHeight,
-			FFMS_RESIZER_BICUBIC, &errinfo)) != 0) goto done;
-		mVideoBitmapInfo.bmiHeader.biSizeImage =
-			(mVideoBitmapInfo.bmiHeader.biWidth = mFrame->ScaledWidth == -1 ? mFrame->EncodedWidth : mFrame->ScaledWidth) *
-			(mVideoBitmapInfo.bmiHeader.biHeight = mFrame->ScaledHeight == -1 ? mFrame->EncodedHeight : mFrame->ScaledHeight) * 4;
+		if ((mFFV = FFMS_CreateVideoSource(u8, vidId, index, 1, FFMS_SEEK_NORMAL, &errinfo)) != NULL) {
+			mFFVP = FFMS_GetVideoProperties(mFFV);
+			if ((mFrame = FFMS_GetFrame(mFFV, mVideoFrameIndex, &errinfo)) == NULL) goto done;
+			mVideoTrack = FFMS_GetTrackFromVideo(mFFV);
+			if ((FFMS_SetOutputFormatV2(mFFV, pixfmts,
+				mFrame->ScaledWidth == -1 ? mFrame->EncodedWidth : mFrame->ScaledWidth,
+				mFrame->ScaledHeight == -1 ? mFrame->EncodedHeight : mFrame->ScaledHeight,
+				FFMS_RESIZER_BICUBIC, &errinfo)) != 0) goto done;
+			mVideoBitmapInfo.bmiHeader.biSizeImage =
+				(mVideoBitmapInfo.bmiHeader.biWidth = mFrame->ScaledWidth == -1 ? mFrame->EncodedWidth : mFrame->ScaledWidth) *
+				(mVideoBitmapInfo.bmiHeader.biHeight = mFrame->ScaledHeight == -1 ? mFrame->EncodedHeight : mFrame->ScaledHeight) * 4;
+		} else if (audId < 0)
+			goto done;
+		else
+			errinfo = { 0, 0 };
 	}
 	if (audId >= 0) {
 		if ((mFFA = FFMS_CreateAudioSource(u8, audId, index, FFMS_DELAY_FIRST_VIDEO_TRACK, &errinfo)) == NULL) goto done;
@@ -161,8 +165,10 @@ done:
 	} else {
 		mState = PlaybackState::STATE_PAUSED;
 		mDockedPlayer->OnSizeRequested(this);
-		mRendererAudio = CreateThread(NULL, NULL, DockedPlayer::Media::RenderAudioExternal, (PVOID)this, NULL, NULL);
-		mRendererVideo = CreateThread(NULL, NULL, DockedPlayer::Media::RenderVideoExternal, (PVOID)this, NULL, NULL);
+		if(mFFA != NULL)
+			mRendererAudio = CreateThread(NULL, NULL, DockedPlayer::Media::RenderAudioExternal, (PVOID)this, NULL, NULL);
+		if(mFFV != NULL)
+			mRendererVideo = CreateThread(NULL, NULL, DockedPlayer::Media::RenderVideoExternal, (PVOID)this, NULL, NULL);
 	}
 	mDockedPlayer->OnProgressCallback(this, false, 0);
 }
@@ -265,7 +271,7 @@ void DockedPlayer::Media::RenderAudioInternal() {
 			UINT32 dur = timeGetTime() - mPlayStartTime;
 			if (dur < 100)
 				dur = 100;
-			int sampc = mFFAP->SampleRate * 100 / 1000;
+			int sampc = mFFAP->SampleRate * 33 / 1000;
 			if (mAudioFrameIndex + sampc > mAudioEndFrameIndex)
 				sampc = (int)(mAudioFrameIndex - mAudioEndFrameIndex);
 
@@ -285,6 +291,9 @@ void DockedPlayer::Media::RenderAudioInternal() {
 			if ((mAudioFrameIndex - mAudioStartFrameIndex + 100) * 1000 / mFFAP->SampleRate < dur) // sync again if > 100ms
 				mAudioFrameIndex = mFFAP->SampleRate * dur / 1000 + mAudioStartFrameIndex;
 
+			if (mFFV == NULL)
+				mVideoFrameIndex = mAudioFrameIndex;
+
 			if (mAudioFrameIndex >= mAudioEndFrameIndex)
 				Pause();
 
@@ -303,10 +312,15 @@ void DockedPlayer::Media::RenderAudioInternal() {
 
 void DockedPlayer::Media::ResetRendererSync() {
 	EnterCriticalSection(&mDecoderSync);
-	const FFMS_FrameInfo *mFrameInfo = FFMS_GetFrameInfo(mVideoTrack, mVideoFrameIndex);
-	const FFMS_TrackTimeBase *base = FFMS_GetTimeBase(mVideoTrack);
-	mPlayStartPos = mFrameInfo->PTS*base->Num / base->Den;
-	mAudioFrameIndex = mAudioStartFrameIndex = (UINT64)(mFrameInfo->PTS * base->Num / (double)base->Den / 1000 * mFFAP->SampleRate);
+	if (mFFV != NULL) {
+		const FFMS_FrameInfo *mFrameInfo = FFMS_GetFrameInfo(mVideoTrack, mVideoFrameIndex);
+		const FFMS_TrackTimeBase *base = FFMS_GetTimeBase(mVideoTrack);
+		mPlayStartPos = mFrameInfo->PTS*base->Num / base->Den;
+		mAudioFrameIndex = mAudioStartFrameIndex = (UINT64)(mFrameInfo->PTS * base->Num / (double)base->Den / 1000 * mFFAP->SampleRate);
+	} else {
+		mPlayStartPos = mVideoFrameIndex * 1000 / mFFAP->SampleRate;
+		mAudioFrameIndex = mAudioStartFrameIndex = mVideoFrameIndex;
+	}
 	mPlayStartTime = timeGetTime();
 	waveOutReset(mWaveOut);
 	LeaveCriticalSection(&mDecoderSync);
@@ -340,8 +354,8 @@ HRESULT DockedPlayer::Media::PlayRange(double start, double end) {
 		return ERROR_INVALID_STATE;
 
 	mDockedPlayer->SetTrackbarPosition(this, (int)(start*mProgressMax / GetLength()));
+	mVideoFrameIndex = TimeToFrame(start);
 	if (mFFVP != NULL) {
-		mVideoFrameIndex = TimeToFrame(start);
 		mVideoEndFrameIndex = TimeToFrame(end);
 		if (mFFAP != NULL) {
 			const FFMS_FrameInfo *mFrameInfo = FFMS_GetFrameInfo(mVideoTrack, mVideoEndFrameIndex);
@@ -373,7 +387,7 @@ int DockedPlayer::Media::TimeToFrame(double time) const {
 	if (mState == STATE_CLOSED || mState == STATE_OPENING)
 		return -1;
 	if (mFFVP == NULL)
-		return ERROR_INVALID_OPERATION;
+		return (int)(mFFAP->SampleRate * time);
 	if (time >= mFFAP->LastTime - mFFAP->FirstTime)
 		return mFFVP->NumFrames - 1;
 	else if (time < mFFAP->FirstTime)
@@ -400,7 +414,10 @@ int DockedPlayer::Media::TimeToFrame(double time) const {
 double DockedPlayer::Media::GetLength() const {
 	if (mState == STATE_CLOSED || mState == STATE_OPENING)
 		return ERROR_INVALID_STATE;
-	return mFFAP->LastTime - mFFAP->FirstTime;
+	if (mFFA != NULL)
+		return mFFAP->LastTime - mFFAP->FirstTime;
+	else
+		return mFFVP->LastTime - mFFVP->FirstTime;
 }
 
 HRESULT DockedPlayer::Media::SetTime(double time, bool updateTrackbarPosition) {
@@ -408,8 +425,7 @@ HRESULT DockedPlayer::Media::SetTime(double time, bool updateTrackbarPosition) {
 		return ERROR_INVALID_STATE;
 	if(updateTrackbarPosition)
 		mDockedPlayer->SetTrackbarPosition(this, (int)(time*mProgressMax / GetLength()));
-	if (mFFV != NULL)
-		mVideoFrameIndex = TimeToFrame(time);
+	mVideoFrameIndex = TimeToFrame(time);
 	if (mState == STATE_RUNNING)
 		ResetRendererSync();
 	else
@@ -420,6 +436,8 @@ HRESULT DockedPlayer::Media::SetTime(double time, bool updateTrackbarPosition) {
 double DockedPlayer::Media::GetTime() {
 	if (mState == STATE_CLOSED || mState == STATE_OPENING)
 		return -1;
+	if (mFFV == NULL)
+		return mAudioFrameIndex / (double)mFFAP->SampleRate;
 	FFMS_Track *trk = FFMS_GetTrackFromVideo(mFFV);
 	const FFMS_TrackTimeBase *base = FFMS_GetTimeBase(trk);
 	EnterCriticalSection(&mDecoderSync);
@@ -433,24 +451,23 @@ ULONGLONG DockedPlayer::Media::GetFrameCount() const {
 	if (mState == STATE_CLOSED || mState == STATE_OPENING)
 		return ERROR_INVALID_STATE;
 	if (mFFVP == NULL)
-		return ERROR_INVALID_OPERATION;
+		return mFFAP->NumSamples;
 	return mFFVP->NumFrames;
 }
 ULONGLONG DockedPlayer::Media::GetFrameIndex() const {
 	if (mState == STATE_CLOSED || mState == STATE_OPENING)
 		return ERROR_INVALID_STATE;
 	if (mFFVP == NULL)
-		return ERROR_INVALID_OPERATION;
+		return mAudioFrameIndex;
 	return mVideoFrameIndex;
 }
 HRESULT DockedPlayer::Media::SetFrameIndex(ULONGLONG frame, bool updateTrackbarPosition) {
 	if (mState == STATE_CLOSED || mState == STATE_OPENING)
 		return -1;
-	if (mFFVP == NULL)
-		return ERROR_INVALID_OPERATION;
-	mVideoFrameIndex = (int)max(0, min(frame, mFFVP->NumFrames - 1));
+	ULONGLONG num = mFFVP == NULL ? mFFAP->NumSamples : mFFVP->NumFrames;
+	mVideoFrameIndex = (int)max(0, min(frame, num - 1));
 	if (updateTrackbarPosition)
-		mDockedPlayer->SetTrackbarPosition(this, (int)((double)mVideoFrameIndex / mFFVP->NumFrames*mProgressMax / GetLength()));
+		mDockedPlayer->SetTrackbarPosition(this, (int)((double)mVideoFrameIndex / num*mProgressMax));
 	if (mState == STATE_RUNNING) {
 		ResetRendererSync();
 	} else {
