@@ -20,7 +20,7 @@
 #include "PluginInterface.h"
 
 const TCHAR NPP_PLUGIN_NAME[] = TEXT("SMIHelper");
-const int nbFunc = 14;
+const int nbFunc = 15;
 
 void pluginInit(HANDLE hModule);
 void pluginCleanUp();
@@ -39,9 +39,12 @@ void insertSubtitleCodeEmpty();
 void gotoCurrentLine();
 void playerJumpTo();
 void playerPlayPause();
+void playerPlayRange();
 void playerClose();
 void playerRew();
 void playerFF();
+void playerRewFrame();
+void playerFFFrame();
 void addTemplate();
 void makeSRT();
 void makeASS();

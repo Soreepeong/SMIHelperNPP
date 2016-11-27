@@ -54,10 +54,21 @@ DWORD WINAPI HandleMessages(LPARAM lParam) {
 		case VK_F5: insertSubtitleCode(); break;
 		case VK_F6: insertSubtitleCodeEmpty(); break;
 		case VK_F9: playerPlayPause(); break;
+		case VK_F10: playerPlayRange(); break;
 		case VK_F8: playerJumpTo(); break;
 		case VK_F7: gotoCurrentLine(); break;
-		case VK_LEFT: playerRew(); break;
-		case VK_RIGHT: playerFF(); break;
+		case VK_LEFT:
+			if (GetAsyncKeyState(VK_CONTROL))
+				playerRewFrame();
+			else
+				playerRew();
+			break;
+		case VK_RIGHT:
+			if (GetAsyncKeyState(VK_CONTROL))
+				playerFFFrame();
+			else
+				playerFF();
+			break;
 		case 'X':
 		case VK_UP:
 			insertSubtitleCode();
@@ -184,14 +195,15 @@ void commandMenuInit() {
 	setCommand(3, TEXT("Use Docked Player"), useDockedPlayer, (new ShortcutKey)->set(true, true, false, 'P'), MF_BYCOMMAND | (bUseDockedPlayer ? MF_CHECKED : MF_UNCHECKED));
 	setCommand(4, TEXT("Reopen file"), playerClose, (new ShortcutKey)->set(true, true, false, 'O'), false);
 	setCommand(5, TEXT("Play/Pause"), playerPlayPause, (new ShortcutKey)->set(false, false, false, VK_F9), false);
-	setCommand(6, TEXT("Go to current line"), playerJumpTo, (new ShortcutKey)->set(false, false, false, VK_F8), false);
-	setCommand(7, TEXT("Rewind"), playerRew, (new ShortcutKey)->set(true, true, false, VK_LEFT), false);
-	setCommand(8, TEXT("Fast Forward"), playerFF, (new ShortcutKey)->set(true, true, false, VK_RIGHT), false);
-	setCommand(9, TEXT("Move line to current time"), gotoCurrentLine, (new ShortcutKey)->set(false, false, false, VK_F7), false);
-	setCommand(10, TEXT("---"), NULL, NULL, false);
-	setCommand(11, TEXT("Add template"), addTemplate, NULL, false);
-	setCommand(12, TEXT("Make SRT"), makeSRT, NULL, false);
-	setCommand(13, TEXT("Make ASS"), makeASS, NULL, false);
+	setCommand(6, TEXT("Play Range"), playerPlayRange, (new ShortcutKey)->set(false, false, false, VK_F10), false);
+	setCommand(7, TEXT("Go to current line"), playerJumpTo, (new ShortcutKey)->set(false, false, false, VK_F8), false);
+	setCommand(8, TEXT("Rewind"), playerRew, (new ShortcutKey)->set(true, true, false, VK_LEFT), false);
+	setCommand(9, TEXT("Fast Forward"), playerFF, (new ShortcutKey)->set(true, true, false, VK_RIGHT), false);
+	setCommand(10, TEXT("Move line to current time"), gotoCurrentLine, (new ShortcutKey)->set(false, false, false, VK_F7), false);
+	setCommand(11, TEXT("---"), NULL, NULL, false);
+	setCommand(12, TEXT("Add template"), addTemplate, NULL, false);
+	setCommand(13, TEXT("Make SRT"), makeSRT, NULL, false);
+	setCommand(14, TEXT("Make ASS"), makeASS, NULL, false);
 	if (!bUseDockedPlayer)
 		useDockedPlayer();
 }
@@ -218,7 +230,7 @@ bool setCommand(size_t index, TCHAR *cmdName, PFUNCPLUGINCMD pFunc, ShortcutKey 
 
 	lstrcpy(funcItem[index]._itemName, cmdName);
 	funcItem[index]._pFunc = pFunc;
-	funcItem[index]._init2Check = check0nInit;
+	funcItem[index]._init2Check = 0 != check0nInit;
 	funcItem[index]._pShKey = sk;
 
 	return true;
@@ -448,7 +460,7 @@ void gotoCurrentLine() {
 		return;
 	}
 
-	int curLine = ::SendMessage(curScintilla, SCI_GETLINECOUNT, ::SendMessage(curScintilla, SCI_GETCURRENTPOS, 0, 0), 0) - 1;
+	int curLine = ::SendMessage(curScintilla, SCI_GETLINECOUNT, 0, 0) - 1;
 	do {
 		int lineLength = ::SendMessage(curScintilla, SCI_LINELENGTH, curLine, 0);
 		if (lineLength - 1 > sizeof(sync))
@@ -485,6 +497,65 @@ void playerPlayPause() {
 	}
 }
 
+void playerPlayRange() {
+	if (bUseDockedPlayer) {
+		switch (dockedPlayer.State()) {
+			case PlaybackState::STATE_CLOSED:
+				tryOpenMedia();
+				break;
+			case PlaybackState::STATE_PAUSED:
+			case PlaybackState::STATE_RUNNING: {
+				int which = -1;
+				char sync[8192];
+				::SendMessage(nppData._nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&which);
+				if (which == -1)
+					return;
+				HWND curScintilla = (which == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
+				double s1 = -1, s2 = -1;
+				int linec = ::SendMessage(curScintilla, SCI_GETLINECOUNT, 0, 0);
+				int curLine = ::SendMessage(curScintilla, SCI_LINEFROMPOSITION, ::SendMessage(curScintilla, SCI_GETCURRENTPOS, 0, 0), 0);
+				do {
+					int lineLength = ::SendMessage(curScintilla, SCI_LINELENGTH, curLine, 0);
+					if (lineLength - 1 > sizeof(sync))
+						continue;
+					::SendMessage(curScintilla, SCI_GETLINE, curLine, (WPARAM)sync);
+					sync[lineLength] = 0;
+					std::smatch match;
+					std::string subject(sync);
+					if (std::regex_search(subject, match, syncmatcher) && match.size() > 1) {
+						s1 = atoi(match.str(2).c_str()) / 1000.;
+						break;
+					}
+				} while (curLine-- > 0);
+				while (++curLine < linec){
+					int lineLength = ::SendMessage(curScintilla, SCI_LINELENGTH, curLine, 0);
+					if (lineLength - 1 > sizeof(sync))
+						continue;
+					::SendMessage(curScintilla, SCI_GETLINE, curLine, (WPARAM)sync);
+					sync[lineLength] = 0;
+					std::smatch match;
+					std::string subject(sync);
+					if (std::regex_search(subject, match, syncmatcher) && match.size() > 1) {
+						s2 = atoi(match.str(2).c_str()) / 1000.;
+						break;
+					}
+				}
+				if (s1 >= 0 && s2 >= 0) {
+					dockedPlayer.Pause();
+					dockedPlayer.PlayRange(s1, s2);
+				} else if (s1 >= 0) {
+					dockedPlayer.Pause();
+					dockedPlayer.SetTime(s1);
+					dockedPlayer.Play();
+				}
+				break;
+			}
+		}
+	} else {
+		playerPlayPause();
+	}
+}
+
 void playerRew() {
 	if (bUseDockedPlayer) {
 		if (dockedPlayer.isClosed())
@@ -501,6 +572,20 @@ void playerRew() {
 	}
 }
 
+void playerRewFrame() {
+	if (bUseDockedPlayer) {
+		if (dockedPlayer.isClosed())
+			tryOpenMedia();
+		else {
+			dockedPlayer.Pause();
+			dockedPlayer.SetFrame(dockedPlayer.GetFrame() - 1);
+		}
+	} else {
+		if (0 != sendMpcHcCommand(891))
+			tryOpenMedia();
+	}
+}
+
 void playerFF() {
 	if (bUseDockedPlayer) {
 		if (dockedPlayer.isClosed())
@@ -514,6 +599,20 @@ void playerFF() {
 			tryOpenMedia();
 		else
 			sendMpcHcCommand(887);
+	}
+}
+
+void playerFFFrame() {
+	if (bUseDockedPlayer) {
+		if (dockedPlayer.isClosed())
+			tryOpenMedia();
+		else {
+			dockedPlayer.Pause();
+			dockedPlayer.SetFrame(dockedPlayer.GetFrame() + 1);
+		}
+	} else {
+		if (0 != sendMpcHcCommand(892))
+			tryOpenMedia();
 	}
 }
 

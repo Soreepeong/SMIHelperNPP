@@ -1,6 +1,7 @@
 #include "DockedPlayer.h"
 #include "PluginInterface.h"
 #include <Commctrl.h>
+#include<Mmsystem.h>
 #define TRACKBAR_TIMER 10000
 
 extern NppData nppData;
@@ -21,7 +22,8 @@ const IID IID_IAudioRenderClient = __uuidof(IAudioRenderClient);
 DockedPlayer::DockedPlayer() :
 	DockingDlgInterface(IDD_PLAYER){
 	FFMS_Init(0, 0);
-	mDecodeWait = CreateEvent(NULL, false, false, NULL);
+	mDecodeAudioWait = CreateEvent(NULL, false, false, NULL);
+	mDecodeVideoWait = CreateEvent(NULL, false, false, NULL);
 	InitializeCriticalSection(&mDecoderSync);
 	mVideoBitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
 	mVideoBitmapInfo.bmiHeader.biBitCount = 32;
@@ -33,7 +35,8 @@ DockedPlayer::DockedPlayer() :
 
 DockedPlayer::~DockedPlayer() {
 	CloseFile();
-	CloseHandle(mDecodeWait);
+	CloseHandle(mDecodeAudioWait);
+	CloseHandle(mDecodeVideoWait);
 	DeleteCriticalSection(&mDecoderSync);
 }
 
@@ -45,7 +48,17 @@ void DockedPlayer::OpenFileInternal(TCHAR *u16, char *u8, TCHAR *iu16, char *iu8
 	REFERENCE_TIME hnsRequestedDuration = REFTIMES_PER_SEC;
 	IMMDeviceEnumerator *pEnumerator = NULL;
 	DWORD flags = 0;
-	CoInitialize(NULL);
+	struct {
+		DockedPlayer *player;
+		UINT32 lastCall;
+	} loaderCallbackData = { this, 0 };
+
+	mState = PlaybackState::STATE_OPENING;
+	SendMessage(mControls.mOpenProgress, PBM_SETPOS, 0, 0);
+	mControls.showOpeningWindows(true);
+
+	hr = CoInitialize(NULL);
+	EXIT_ON_ERROR(hr);
 	hr = CoCreateInstance( CLSID_MMDeviceEnumerator, NULL, CLSCTX_ALL, IID_IMMDeviceEnumerator, (void**)&pEnumerator);
 	EXIT_ON_ERROR(hr);
 	hr = pEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &pDevice);
@@ -53,11 +66,12 @@ void DockedPlayer::OpenFileInternal(TCHAR *u16, char *u8, TCHAR *iu16, char *iu8
 	hr = pDevice->Activate(IID_IAudioClient, CLSCTX_ALL, NULL, (void**)&pAudioClient);
 	EXIT_ON_ERROR(hr);
 
-	mState = PlaybackState::STATE_OPENING;
 	if (PathFileExists(iu16))
 		index = FFMS_ReadIndex(iu8, &errinfo);
 	if (index == NULL) {
+		mFFLoadCancel = false;
 		if ((mFFIndexer = FFMS_CreateIndexer(u8, &errinfo)) == NULL) goto done;
+		FFMS_SetProgressCallback(mFFIndexer, DockedPlayer::FFOpenCallbackExternal, &loaderCallbackData);
 		// FFMS_TrackTypeIndexSettings(FFMS_Indexer *Indexer, int TrackType, int Index, int Dump);
 		FFMS_TrackTypeIndexSettings(mFFIndexer, FFMS_TYPE_VIDEO, true, false);
 		FFMS_TrackTypeIndexSettings(mFFIndexer, FFMS_TYPE_AUDIO, true, false);
@@ -78,10 +92,10 @@ void DockedPlayer::OpenFileInternal(TCHAR *u16, char *u8, TCHAR *iu16, char *iu8
 		int pixfmts[2];
 		pixfmts[0] = FFMS_GetPixFmt("bgra");
 		pixfmts[1] = -1;
-		mFrameIndex = 0;
+		mVideoFrameIndex = 0;
 		if ((mFFV = FFMS_CreateVideoSource(u8, vidId, index, 1, FFMS_SEEK_NORMAL, &errinfo)) == NULL) goto done;
 		mFFVP = FFMS_GetVideoProperties(mFFV);
-		if ((mFrame = FFMS_GetFrame(mFFV, mFrameIndex, &errinfo)) == NULL) goto done;
+		if ((mFrame = FFMS_GetFrame(mFFV, mVideoFrameIndex, &errinfo)) == NULL) goto done;
 		mVideoTrack = FFMS_GetTrackFromVideo(mFFV);
 		if ((FFMS_SetOutputFormatV2(mFFV, pixfmts,
 			mFrame->ScaledWidth == -1 ? mFrame->EncodedWidth : mFrame->ScaledWidth,
@@ -122,9 +136,11 @@ done:
 	} else {
 		mState = PlaybackState::STATE_PAUSED;
 		PostMessage(getHSelf(), WM_SIZE, NULL, NULL);
-		mRenderer = CreateThread(NULL, NULL, DockedPlayer::RendererExternal, (PVOID)this, NULL, NULL);
+		mRendererAudio = CreateThread(NULL, NULL, DockedPlayer::RenderAudioExternal, (PVOID)this, NULL, NULL);
+		mRendererVideo = CreateThread(NULL, NULL, DockedPlayer::RenderVideoExternal, (PVOID)this, NULL, NULL);
 	}
 	SAFE_RELEASE(pEnumerator);
+	mControls.showOpeningWindows(false);
 }
 DWORD WINAPI DockedPlayer::OpenFileExternal(PVOID ptr) {
 	struct _data {
@@ -174,6 +190,21 @@ HRESULT DockedPlayer::OpenFile(PCWSTR pszFileName) {
 	return GetLastError();
 }
 
+int FFMS_CC DockedPlayer::FFOpenCallbackInternal(int64_t Current, int64_t Total, UINT32 &lastCall) {
+	if (lastCall + 50 < GetTickCount()) {
+		PostMessage(mControls.mOpenProgress, PBM_SETPOS, static_cast<int>((double)mProgressMax / Total * Current), 0);
+		lastCall = GetTickCount();
+	}
+	return mFFLoadCancel;
+}
+int FFMS_CC DockedPlayer::FFOpenCallbackExternal(int64_t Current, int64_t Total, void *ICPrivate) {
+	struct _data {
+		DockedPlayer *player;
+		UINT32 lastCall;
+	} *data = reinterpret_cast<_data*>(ICPrivate);
+	return data->player->FFOpenCallbackInternal(Current, Total, data->lastCall);
+}
+
 void DockedPlayer::CloseFile() {
 	EnterCriticalSection(&mDecoderSync);
 	if (mState == STATE_RUNNING)
@@ -187,13 +218,17 @@ void DockedPlayer::CloseFile() {
 		mFFIndexer = NULL;
 		mFFLoader = INVALID_HANDLE_VALUE;
 	}
-	mPlayResetSync = true;
-	if (mRenderer != INVALID_HANDLE_VALUE) {
-		SetEvent(mDecodeWait);
-		if (WaitForSingleObject(mRenderer, 1000) == WAIT_TIMEOUT)
-			TerminateThread(mRenderer, -1);
-		CloseHandle(mRenderer);
-		mRenderer = INVALID_HANDLE_VALUE;
+	if (mRendererVideo != INVALID_HANDLE_VALUE) {
+		SetEvent(mDecodeVideoWait);
+		WaitForSingleObject(mRendererVideo, INFINITE);
+		CloseHandle(mRendererVideo);
+		mRendererVideo = INVALID_HANDLE_VALUE;
+	}
+	if (mRendererAudio != INVALID_HANDLE_VALUE) {
+		SetEvent(mDecodeAudioWait);
+		WaitForSingleObject(mRendererAudio, INFINITE);
+		CloseHandle(mRendererAudio);
+		mRendererAudio = INVALID_HANDLE_VALUE;
 	}
 	if (mFFV != NULL)
 		FFMS_DestroyVideoSource(mFFV);
@@ -211,79 +246,105 @@ void DockedPlayer::CloseFile() {
 	LeaveCriticalSection(&mDecoderSync);
 }
 
-void DockedPlayer::RendererInternal() {
-	int lastFrame = -1, lastAudio = -1;
-	double mPlayStart = 0;
+void DockedPlayer::RenderVideoInternal() {
+	int lastFrame = -1;
 	char errmsg[1024] = { 0 };
-	int sampc = 0, dur = 0;
-	FFMS_ErrorInfo		errinfo = { FFMS_ERROR_SUCCESS, FFMS_ERROR_SUCCESS, sizeof(errmsg), errmsg };
+	FFMS_ErrorInfo errinfo = { FFMS_ERROR_SUCCESS, FFMS_ERROR_SUCCESS, sizeof(errmsg), errmsg };
 	const FFMS_TrackTimeBase *base = FFMS_GetTimeBase(mVideoTrack);
-	LARGE_INTEGER StartingTime, EndingTime;
-	LARGE_INTEGER Frequency;
-	QueryPerformanceFrequency(&Frequency);
-	QueryPerformanceCounter(&StartingTime);
-	mPlayStart = 0;
+	const FFMS_FrameInfo *finfo;
+	HANDLE sleepEvent = CreateEvent(NULL, false, false, NULL);
 	while (mState != PlaybackState::STATE_CLOSED) {
 		EnterCriticalSection(&mDecoderSync);
-		if (mPlayResetSync) {
-			mFrameInfo = FFMS_GetFrameInfo(mVideoTrack, mFrameIndex);
-			mPlayStart = mFrameInfo->PTS*base->Num / (double)base->Den;
-			mPlayResetSync = false;
-			QueryPerformanceCounter(&StartingTime);
-		}
-		if (lastFrame != mFrameIndex) {
-			mFrame = FFMS_GetFrame(mFFV, mFrameIndex, &errinfo);
-			mFrameInfo = FFMS_GetFrameInfo(mVideoTrack, mFrameIndex + 1);
-			if (mFrameInfo == NULL) {
-				sampc = dur = 0;
-			} else {
-				sampc = mFrameInfo->PTS;
-				mFrameInfo = FFMS_GetFrameInfo(mVideoTrack, mFrameIndex);
-				dur = (int)((sampc - mFrameInfo->PTS) * base->Num / (double)base->Den);
-				sampc = (int)((sampc - mFrameInfo->PTS) * base->Num / (double)base->Den / 1000 * mFFAP->SampleRate);
-			}
-			lastFrame = mFrameIndex;
+		if (lastFrame != mVideoFrameIndex) {
+			finfo = FFMS_GetFrameInfo(mVideoTrack, mVideoFrameIndex);
+			mFrame = FFMS_GetFrame(mFFV, mVideoFrameIndex, &errinfo);
+			lastFrame = mVideoFrameIndex;
 			InvalidateRect(getHSelf(), &mVideoRect, false);
-			if (mState == PlaybackState::STATE_RUNNING && sampc != 0) {
-				BYTE *pData;
-				UINT32  pad;
-				pAudioClient->GetCurrentPadding(&pad);
-				if (pad == 0) {
-					pRenderClient->GetBuffer(sampc, &pData);
-					FFMS_GetAudio(mFFA, pData, mFFAP->NumSamples * mFrameIndex / mFFVP->NumFrames, sampc, &errinfo);
-					pRenderClient->ReleaseBuffer(sampc, NULL);
-				}
-				//*/
-			}
 		}
 		LeaveCriticalSection(&mDecoderSync);
 		if (mState == PlaybackState::STATE_RUNNING) {
-			while (mState != PlaybackState::STATE_CLOSED) {
-				QueryPerformanceCounter(&EndingTime);
-				int dec = (int)((EndingTime.QuadPart - StartingTime.QuadPart) * 1000 / Frequency.QuadPart);
-				if (dec >= dur)
-					break;
-				Sleep(10);
+			int wait = (int)(finfo->PTS*base->Num/base->Den - mPlayStartPos - timeGetTime() + mPlayStartTime);
+			if (wait < 0) {
+				EnterCriticalSection(&mDecoderSync);
+				while (timeGetTime() - mPlayStartTime > finfo->PTS*base->Num / (double)base->Den - mPlayStartPos && mVideoFrameIndex + 1 < mFFVP->NumFrames) {
+					mVideoFrameIndex++;
+					finfo = FFMS_GetFrameInfo(mVideoTrack, mVideoFrameIndex);
+				}
+				LeaveCriticalSection(&mDecoderSync);
+			}else{
+				timeSetEvent(wait, 10, (LPTIMECALLBACK)sleepEvent, NULL, TIME_ONESHOT | TIME_CALLBACK_EVENT_SET);
+				WaitForSingleObject(sleepEvent, 10);
 			}
-			
-			QueryPerformanceCounter(&EndingTime);
-			int dec = (int)((EndingTime.QuadPart - StartingTime.QuadPart) * 1000 / Frequency.QuadPart);
-			EnterCriticalSection(&mDecoderSync);
-			if(dec > mFrameInfo->PTS*base->Num / (double)base->Den - mPlayStart && mFrameIndex + 1 < mFFVP->NumFrames && !mPlayResetSync)
-				mFrameIndex++;
-			LeaveCriticalSection(&mDecoderSync);
 		} else {
-			WaitForSingleObject(mDecodeWait, INFINITE);
-			QueryPerformanceCounter(&StartingTime);
+			WaitForSingleObject(mDecodeVideoWait, INFINITE);
+			if (mState == PlaybackState::STATE_CLOSED)
+				break;
+			ResetRendererSync();
 		}
-		if (mFrameIndex == mFFVP->NumFrames - 1)
+		if (mVideoFrameIndex == mFFVP->NumFrames - 1 || mVideoFrameIndex >= mVideoEndFrameIndex)
 			Pause();
 	}
-	mRenderer = NULL;
+	CloseHandle(sleepEvent);
+	mRendererVideo = NULL;
 }
 
-DWORD WINAPI DockedPlayer::RendererExternal(PVOID ptr) {
-	((DockedPlayer*)ptr)->RendererInternal();
+DWORD WINAPI DockedPlayer::RenderVideoExternal(PVOID ptr) {
+	((DockedPlayer*)ptr)->RenderVideoInternal();
+	return 0;
+}
+
+void DockedPlayer::RenderAudioInternal() {
+	char errmsg[1024] = { 0 };
+	FFMS_ErrorInfo errinfo = { FFMS_ERROR_SUCCESS, FFMS_ERROR_SUCCESS, sizeof(errmsg), errmsg };
+	const FFMS_TrackTimeBase *base = FFMS_GetTimeBase(mVideoTrack);
+	mPlayStartPos = 0;
+	while (mState != PlaybackState::STATE_CLOSED) {
+		WaitForSingleObject(mDecodeAudioWait, INFINITE);
+		while (mState == PlaybackState::STATE_RUNNING) {
+			UINT32 dur = timeGetTime() - mPlayStartTime;
+			BYTE *pData;
+			UINT32 pad;
+			if (dur < 100)
+				dur = 100;
+			int sampc = mFFAP->SampleRate * 100 / 1000;
+			pAudioClient->GetCurrentPadding(&pad);
+			if (pad > 2000)
+				sampc -= pad;
+			if (mAudioFrameIndex + sampc > mAudioEndFrameIndex)
+				sampc = (int) (mAudioFrameIndex - mAudioEndFrameIndex);
+			pRenderClient->GetBuffer(sampc, &pData);
+			FFMS_GetAudio(mFFA, pData, mAudioFrameIndex, sampc, &errinfo);
+			pRenderClient->ReleaseBuffer(sampc, NULL);
+			mAudioFrameIndex += sampc;
+			if ((mAudioFrameIndex - mAudioStartFrameIndex + 100) * 1000 / mFFAP->SampleRate < dur) // sync again if > 100ms
+				mAudioFrameIndex = mFFAP->SampleRate * dur / 1000 + mAudioStartFrameIndex;
+
+			if (mAudioFrameIndex >= mAudioEndFrameIndex) {
+				Pause();
+			}
+
+			do {
+				Sleep(10);
+				pAudioClient->GetCurrentPadding(&pad);
+			} while (pad >= 4000 && mState != PlaybackState::STATE_CLOSED);
+		}
+	}
+	mRendererAudio = NULL;
+}
+
+void DockedPlayer::ResetRendererSync() {
+	EnterCriticalSection(&mDecoderSync);
+	const FFMS_FrameInfo *mFrameInfo = FFMS_GetFrameInfo(mVideoTrack, mVideoFrameIndex);
+	const FFMS_TrackTimeBase *base = FFMS_GetTimeBase(mVideoTrack);
+	mPlayStartPos = mFrameInfo->PTS*base->Num / base->Den;
+	mAudioFrameIndex = mAudioStartFrameIndex = (UINT64)(mFrameInfo->PTS * base->Num / (double)base->Den / 1000 * mFFAP->SampleRate);
+	mPlayStartTime = timeGetTime();
+	pAudioClient->Reset();
+	LeaveCriticalSection(&mDecoderSync);
+}
+
+DWORD WINAPI DockedPlayer::RenderAudioExternal(PVOID ptr) {
+	((DockedPlayer*)ptr)->RenderAudioInternal();
 	return 0;
 }
 
@@ -292,23 +353,83 @@ HRESULT DockedPlayer::Play() {
 	if (mState != STATE_PAUSED)
 		return ERROR_INVALID_STATE;
 
-	mState = STATE_RUNNING;
-	mPlayResetSync = true;
-	SendMessage(m_slider, TBM_SETPOS, true, (int)(GetTime()*100000000. / GetLength()));
-	SetTimer(getHSelf(), TRACKBAR_TIMER, 250, NULL);
-	SetEvent(mDecodeWait);
 	pAudioClient->Start();
+	mState = STATE_RUNNING;
+	ResetRendererSync();
+	if (mFFVP != NULL) 
+		mVideoEndFrameIndex = mFFVP->NumFrames;
+	if(mFFAP != NULL)
+		mAudioEndFrameIndex = mFFAP->NumSamples;
+	SendMessage(mControls.mPlaybackSlider, TBM_SETPOS, true, (int)(GetTime()*mProgressMax / GetLength()));
+	SetTimer(getHSelf(), TRACKBAR_TIMER, 250, NULL);
+	SetEvent(mDecodeVideoWait);
+	SetEvent(mDecodeAudioWait);
+	return ERROR_SUCCESS;
+}
+
+HRESULT DockedPlayer::PlayRange(double start, double end) {
+	if (mState != STATE_PAUSED)
+		return ERROR_INVALID_STATE;
+
+	SendMessage(mControls.mPlaybackSlider, TBM_SETPOS, true, (int)(start*mProgressMax / GetLength()));
+	if (mFFVP != NULL) {
+		mVideoFrameIndex = TimeToFrame(start);
+		mVideoEndFrameIndex = TimeToFrame(end);
+		if (mFFAP != NULL) {
+			const FFMS_FrameInfo *mFrameInfo = FFMS_GetFrameInfo(mVideoTrack, mVideoEndFrameIndex);
+			const FFMS_TrackTimeBase *base = FFMS_GetTimeBase(mVideoTrack);
+			mAudioEndFrameIndex = (UINT64)(mFrameInfo->PTS * base->Num / (double)base->Den / 1000 * mFFAP->SampleRate);
+		}
+	} else if (mFFAP != NULL) {
+		mAudioEndFrameIndex = (UINT64)(end * mFFAP->SampleRate);
+	}
+
+	pAudioClient->Start();
+	mState = STATE_RUNNING;
+	ResetRendererSync();
+	SetTimer(getHSelf(), TRACKBAR_TIMER, 250, NULL);
+	SetEvent(mDecodeVideoWait);
+	SetEvent(mDecodeAudioWait);
 	return ERROR_SUCCESS;
 }
 
 HRESULT DockedPlayer::Pause() {
 	if (mState != STATE_RUNNING)
 		return ERROR_INVALID_STATE;
+	if (mFFV != NULL) 
 
-	KillTimer(getHSelf(), TRACKBAR_TIMER);
 	pAudioClient->Stop();
+	KillTimer(getHSelf(), TRACKBAR_TIMER);
 	mState = STATE_PAUSED;
 	return ERROR_SUCCESS;
+}
+
+int DockedPlayer::TimeToFrame(double time) const {
+	if (mState == STATE_CLOSED)
+		return -1;
+	if(mFFVP == NULL)
+		return ERROR_INVALID_OPERATION;
+	if (time >= mFFAP->LastTime - mFFAP->FirstTime)
+		return mFFVP->NumFrames - 1;
+	else if (time < mFFAP->FirstTime)
+		return 0;
+	else {
+		const FFMS_FrameInfo *info;
+		int l = 0;
+		int r = mFFVP->NumFrames;
+		FFMS_Track *trk = FFMS_GetTrackFromVideo(mFFV);
+		const FFMS_TrackTimeBase *base = FFMS_GetTimeBase(trk);
+		while (l + 1 < r) {
+			int m = (l + r) / 2;
+			info = FFMS_GetFrameInfo(trk, m);
+			double t = (info->PTS * base->Num) / (double)base->Den / 1000;
+			if (t < time)
+				l = m;
+			else
+				r = m;
+		}
+		return l;
+	}
 }
 
 double DockedPlayer::GetLength() const {
@@ -320,34 +441,13 @@ double DockedPlayer::GetLength() const {
 HRESULT DockedPlayer::SetTime(double time) {
 	if (mState == STATE_CLOSED)
 		return ERROR_INVALID_STATE;
-	EnterCriticalSection(&mDecoderSync);
-	SendMessage(m_slider, TBM_SETPOS, true, (int)(time*100000000. / GetLength()));
-	if(mFFV != NULL){
-		if (time >= mFFAP->LastTime - mFFAP->FirstTime)
-			mFrameIndex = mFFVP->NumFrames - 1;
-		else {
-			const FFMS_FrameInfo *info;
-			int l = 0;
-			int r = mFFVP->NumFrames;
-			FFMS_Track *trk = FFMS_GetTrackFromVideo(mFFV);
-			const FFMS_TrackTimeBase *base = FFMS_GetTimeBase(trk);
-			while (l + 1 < r) {
-				int m = (l + r) / 2;
-				info = FFMS_GetFrameInfo(trk, m);
-				double t = (info->PTS * base->Num) / (double)base->Den / 1000;
-				if (t < time)
-					l = m;
-				else
-					r = m;
-			}
-			mFrameIndex = l;
-		}
-	}
-	if (mState == STATE_RUNNING) {
-		mPlayResetSync = true;
-	}else
-		SetEvent(mDecodeWait);
-	LeaveCriticalSection(&mDecoderSync);
+	SendMessage(mControls.mPlaybackSlider, TBM_SETPOS, true, (int)(time*mProgressMax / GetLength()));
+	if(mFFV != NULL)
+		mVideoFrameIndex = TimeToFrame(time);
+	if (mState == STATE_RUNNING)
+		ResetRendererSync();
+	else
+		SetEvent(mDecodeVideoWait);
 	return ERROR_SUCCESS;
 }
 
@@ -357,10 +457,38 @@ double DockedPlayer::GetTime() {
 	FFMS_Track *trk = FFMS_GetTrackFromVideo(mFFV);
 	const FFMS_TrackTimeBase *base = FFMS_GetTimeBase(trk);
 	EnterCriticalSection(&mDecoderSync);
-	const FFMS_FrameInfo *info = FFMS_GetFrameInfo(trk, mFrameIndex);
+	const FFMS_FrameInfo *info = FFMS_GetFrameInfo(trk, mVideoFrameIndex);
 	double res = ((info->PTS * base->Num) / (double)base->Den) / 1000;
 	LeaveCriticalSection(&mDecoderSync);
 	return res;
+}
+
+ULONGLONG DockedPlayer::GetFrames() const {
+	if (mState == STATE_CLOSED)
+		return ERROR_INVALID_STATE;
+	if (mFFVP == NULL)
+		return ERROR_INVALID_OPERATION;
+	return mFFVP->NumFrames;
+}
+ULONGLONG DockedPlayer::GetFrame() const {
+	if (mState == STATE_CLOSED)
+		return ERROR_INVALID_STATE;
+	if (mFFVP == NULL)
+		return ERROR_INVALID_OPERATION;
+	return mVideoFrameIndex;
+}
+HRESULT DockedPlayer::SetFrame(ULONGLONG frame) {
+	if (mState == STATE_CLOSED)
+		return -1;
+	if (mFFVP == NULL)
+		return ERROR_INVALID_OPERATION;
+	mVideoFrameIndex = (int) max(0, min(frame, mFFVP->NumFrames - 1));
+	if (mState == STATE_RUNNING) {
+		ResetRendererSync();
+	} else {
+		SetEvent(mDecodeVideoWait);
+	}
+	return ERROR_SUCCESS;
 }
 
 BOOL DockedPlayer::HasVideo() const {
@@ -370,19 +498,29 @@ BOOL DockedPlayer::HasVideo() const {
 BOOL CALLBACK DockedPlayer::run_dlgProc(UINT message, WPARAM wParam, LPARAM lParam) {
 	switch (message) {
 		case WM_INITDIALOG: {
-			m_slider = GetDlgItem(getHSelf(), IDC_PLAYER_NAVIGATE);
-			SendMessage(m_slider, TBM_SETRANGEMIN, TRUE, 0);
-			SendMessage(m_slider, TBM_SETRANGEMAX, TRUE, 100000000);
+			mControls.mPlaybackSlider = GetDlgItem(getHSelf(), IDC_PLAYER_NAVIGATE);
+			mControls.mOpenProgress = GetDlgItem(getHSelf(), IDC_OPEN_PROGRES);
+			mControls.mOpenCancel = GetDlgItem(getHSelf(), IDC_CANCEL_OPENING);
+			SendMessage(mControls.mPlaybackSlider, TBM_SETRANGEMIN, TRUE, 0);
+			SendMessage(mControls.mPlaybackSlider, TBM_SETRANGEMAX, TRUE, mProgressMax);
+			SendMessage(mControls.mOpenProgress, PBM_SETRANGE32, 0, mProgressMax);
+			ShowWindow(mControls.mOpenProgress, SW_HIDE);
+			ShowWindow(mControls.mOpenCancel, SW_HIDE);
+			break;
+		}
+		case WM_COMMAND: {
+			if (wParam == IDC_CANCEL_OPENING) {
+				mFFLoadCancel = true;
+			}
 			break;
 		}
 		case WM_HSCROLL: {
-			double k = SendMessage(m_slider, TBM_GETPOS, NULL, NULL) / 100000000.;
-			SetTime(GetLength() * k);
+			SetTime(GetLength() * SendMessage(mControls.mPlaybackSlider, TBM_GETPOS, NULL, NULL) / mProgressMax);
 			break;
 		}
 		case WM_TIMER: {
 			if (wParam == TRACKBAR_TIMER) {
-				SendMessage(m_slider, TBM_SETPOS, true, (int)(GetTime()*100000000. / GetLength()));
+				SendMessage(mControls.mPlaybackSlider, TBM_SETPOS, true, (int)(GetTime()*mProgressMax / GetLength()));
 			}
 			break;
 		}
@@ -399,8 +537,11 @@ BOOL CALLBACK DockedPlayer::run_dlgProc(UINT message, WPARAM wParam, LPARAM lPar
 				}
 			} else
 				m_clientTop = 0;
-			GetWindowRect(m_slider, &r2);
-			SetWindowPos(m_slider, NULL, 0, m_clientTop, r.right, r2.bottom - r2.top, SWP_NOACTIVATE);
+			GetWindowRect(mControls.mPlaybackSlider, &r2);
+			SetWindowPos(mControls.mPlaybackSlider, NULL, 0, m_clientTop, r.right, r2.bottom - r2.top, SWP_NOACTIVATE);
+			GetWindowRect(mControls.mOpenCancel, &r2);
+			SetWindowPos(mControls.mOpenProgress, NULL, 0, 0, r.right - (r2.right - r2.left), r2.bottom - r2.top, SWP_NOACTIVATE);
+			SetWindowPos(mControls.mOpenCancel, NULL, r.right - (r2.right - r2.left), 0, 0, 0, SWP_NOACTIVATE | SWP_NOSIZE);
 			InvalidateRect(getHSelf(), NULL, false);
 			break;
 		}
@@ -417,17 +558,17 @@ BOOL CALLBACK DockedPlayer::run_dlgProc(UINT message, WPARAM wParam, LPARAM lPar
 			SetFocus(getHSelf());
 			break;
 		case WM_NOTIFY: {
-			bool nf = GetFocus() == getHSelf() || GetFocus() == m_slider;
+			bool nf = GetFocus() == getHSelf() || GetFocus() == mControls.mPlaybackSlider;
 			if (m_focused == nf)
 				break;
 			m_focused = nf;
 			RECT rc;
-			GetClientRect(m_slider, &rc);
+			GetClientRect(mControls.mPlaybackSlider, &rc);
 			rc.left = 10;
 			rc.right -= 10;
 			rc.top = m_clientTop + rc.bottom + 10;
 			rc.bottom = rc.top + 600;
-			InvalidateRect(getHSelf(), &rc, true);
+			InvalidateRect(getHSelf(), &rc, false);
 			break;
 		}
 		case WM_PAINT: {
@@ -439,7 +580,6 @@ BOOL CALLBACK DockedPlayer::run_dlgProc(UINT message, WPARAM wParam, LPARAM lPar
 			hdc = BeginPaint(getHSelf(), &ps);
 
 			if (State() != STATE_CLOSED && HasVideo()) {
-				// The player has video, so ask the player to repaint. 
 				if (mFrame != NULL) {
 					SetStretchBltMode(hdc, HALFTONE);
 					SetBrushOrgEx(hdc, 0, 0, NULL);
@@ -453,11 +593,13 @@ BOOL CALLBACK DockedPlayer::run_dlgProc(UINT message, WPARAM wParam, LPARAM lPar
 				const TCHAR *msg = L""
 					"Left: -3 sec\n"
 					"Right: +3 sec\n"
+					"Ctrl+Left: -1 frame\n"
+					"Ctrl+Right: +1 frame\n"
 					"Space: Play / Pause\n"
 					"Z, Num0: Undo\n"
 					"X, Up: Insert timecode\n"
 					"C, Down: Insert stop timecode";
-				GetClientRect(m_slider, &rc);
+				GetClientRect(mControls.mPlaybackSlider, &rc);
 				rc.left = 10;
 				rc.right -= 10;
 				rc.top = m_clientTop + rc.bottom + 10;
