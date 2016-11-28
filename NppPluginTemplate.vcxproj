@@ -107,10 +107,12 @@
     <ClCompile Include="DockedPlayer_Media.cpp" />
     <ClCompile Include="DockingFeature\StaticDialog.cpp" />
     <ClCompile Include="entities.cpp" />
+    <ClCompile Include="fft.cpp" />
     <ClCompile Include="MpcHcRemote.cpp" />
     <ClCompile Include="SMIHelperMain.cpp" />
     <ClCompile Include="PluginDefinition.cpp" />
     <ClCompile Include="SRTMaker.cpp" />
+    <ClCompile Include="WaveView.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DockedPlayer.h" />
@@ -121,6 +123,7 @@
     <ClInclude Include="DockingFeature\Window.h" />
     <ClInclude Include="entities.h" />
     <ClInclude Include="ffms2\ffms.h" />
+    <ClInclude Include="fft.h" />
     <ClInclude Include="menuCmdID.h" />
     <ClInclude Include="MpcHcRemote.h" />
     <ClInclude Include="Notepad_plus_msgs.h" />
@@ -129,6 +132,7 @@
     <ClInclude Include="resource.h" />
     <ClInclude Include="Scintilla.h" />
     <ClInclude Include="SRTMaker.h" />
+    <ClInclude Include="WaveView.h" />
   </ItemGroup>
   <ItemGroup>
     <None Include="README.md" />

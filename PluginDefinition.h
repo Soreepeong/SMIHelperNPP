@@ -36,6 +36,17 @@ void onTabChanged(std::wstring selection, std::vector<std::wstring> &newlist);
 // Your plugin command functions
 //
 const std::regex syncmatcher("<sync(?=\\s)[^<>]*\\sstart=(['\"]?)(\\d+)\\1(?=\\s|>)[^<>]*>", std::regex_constants::icase);
+const std::regex tag_remover("</?p\\b[^<>]*>", std::regex_constants::icase);
+const std::regex br_replacer("<br\\b[^<>]*>", std::regex_constants::icase);
+const std::regex multiline_remover("\n+");
+const std::regex space_remover("\\s+");
+
+void setSubtitleCode(double time);
+void setSubtitleCodeEmpty(double time);
+void createUndoPoint(bool begin = true);
+void playerPlayRangeInternal(double begin, double end);
+void selectNextLine();
+
 void insertSubtitleCode();
 void insertSubtitleCodeEmpty();
 void gotoCurrentLine();

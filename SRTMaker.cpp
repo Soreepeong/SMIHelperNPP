@@ -7,9 +7,6 @@
 #include <locale>
 #include "entities.h"
 
-std::regex tag_remover("</?p\\b[^<>]*>", std::regex_constants::icase);
-std::regex br_replacer("<br\\b[^<>]*>", std::regex_constants::icase);
-std::regex multiline_remover("\n+");
 inline std::string trim(const std::string &s)
 {
 	auto  wsfront = std::find_if_not(s.begin(), s.end(), [](int c) {return std::isspace(c); });

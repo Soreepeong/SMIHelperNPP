@@ -2,6 +2,7 @@
 #include "DockingFeature/DockingDlgInterface.h"
 #include "resource.h"
 #include "ffms2/ffms.h"
+#include "WaveView.h"
 #include <Mmsystem.h>
 #include <Mmreg.h>
 #include <map>
@@ -29,8 +30,14 @@ public:
 
 		PlaybackState State() const { return mState; }
 		const char* GetErrorMsg() const { return mErrorMsg; }
+		double GetAudioWaveformGenerationStatus() const { return mAudioWaveformGenerationStatus; };
+
+		WaveView* GetWaveView() const { return mWaveView; }
+		const FFMS_AudioProperties* GetAudioProperties() const { return mFFAP; }
+		const FFMS_VideoProperties* GetVideoProperties() const { return mFFVP; }
 
 		int TimeToFrame(double time) const;
+		int GetAudioFrameIndex() const;
 
 		HRESULT Play();
 		HRESULT PlayRange(double start, double end);
@@ -48,9 +55,14 @@ public:
 		ULONGLONG GetFrameIndex() const;
 		HRESULT SetFrameIndex(ULONGLONG frame, bool updateTrackbarPosition = true);
 
+		bool RenderAudio(const HDC dc, const RECT &rct);
+
 	private:
 		DockedPlayer *mDockedPlayer;
+		WaveView *mWaveView = NULL;
 		BITMAPINFO mVideoBitmapInfo = { 0 };
+
+		double mAudioWaveformGenerationStatus = 0;
 
 		char mErrorMsg[1024];
 
@@ -101,6 +113,9 @@ public:
 
 	bool	IsFocused() const { return m_focused; };
 
+	void	Invalidate(RECT *r = NULL, bool erase = false);
+	void	ScrollWaveSlider(int to = -1);
+
 	void	SetTab(std::wstring id);
 	void	CloseTab(std::wstring id);
 	std::vector<std::wstring> GetOpenIds() const;
@@ -128,6 +143,27 @@ private:
 
 	std::wstring mCurrentTab;
 	RECT mVideoRect;
+	RECT mWaveRect;
+	RECT mWaveSliderRect;
+	bool mWaveCurrentPosLeftScreen = false;
+	int mWaveSliderScrollBase;
+	int mWaveSliderWidth = 24;
+	int mVideoMaxHeight = 480;
+	int mWaveMaxHeight = 160;
+	int mWaveScrollerHeight = 24;
+	RECT mVideoSizeLimiter;
+	RECT mWaveSizeLimiter;
+	int mLimiterHeight = 8;
+
+	enum MouseCapturedAt {
+		NONE,
+		WAVEFORM,
+		WAVEFORM_SLIDER,
+		LIMITER_VIDEO,
+		LIMITER_WAVEFORM
+	} mMouseAt;
+
+
 	bool m_focused;
 
 	void OnProgressCallback(DockedPlayer::Media *media, bool visible, int progress);
@@ -137,4 +173,8 @@ private:
 	void SetTrackbarPosition(DockedPlayer::Media *media, int position);
 	void StartTrackbarUpdate(DockedPlayer::Media *media);
 	void StopTrackbarUpdate(DockedPlayer::Media *media);
+
+	bool RectCheck(RECT &r, int mx, int my) const {
+		return my > r.top && my < r.bottom && mx > r.left && mx < r.right;
+	}
 };

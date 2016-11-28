@@ -51,6 +51,12 @@
     <ClCompile Include="DockedPlayer_Media.cpp">
       <Filter>Player</Filter>
     </ClCompile>
+    <ClCompile Include="fft.cpp">
+      <Filter>Player</Filter>
+    </ClCompile>
+    <ClCompile Include="WaveView.cpp">
+      <Filter>Player</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="PluginDefinition.h">
@@ -100,6 +106,12 @@
     </ClInclude>
     <ClInclude Include="PluginInterface.h">
       <Filter>NPP</Filter>
+    </ClInclude>
+    <ClInclude Include="fft.h">
+      <Filter>Player</Filter>
+    </ClInclude>
+    <ClInclude Include="WaveView.h">
+      <Filter>Player</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

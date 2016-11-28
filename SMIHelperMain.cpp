@@ -16,6 +16,11 @@
 //Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 
 #include "PluginDefinition.h"
+#include "DockedPlayer.h"
+#ifdef min
+#undef min
+#undef max
+#endif
 
 extern FuncItem funcItem[nbFunc];
 extern NppData nppData;
@@ -59,8 +64,69 @@ extern "C" __declspec(dllexport) FuncItem * getFuncsArray(int *nbF) {
 	return funcItem;
 }
 
+extern bool bUseDockedPlayer;
+extern DockedPlayer dockedPlayer;
 
 extern "C" __declspec(dllexport) void beNotified(SCNotification *notifyCode) {
+	switch (notifyCode->nmhdr.code) {
+		case SCN_UPDATEUI:{
+			if (!bUseDockedPlayer || dockedPlayer.GetMedia() == NULL)
+				return;
+			int which = -1;
+			char sync[8192];
+			::SendMessage(nppData._nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&which);
+			if (which == -1)
+				return;
+			HWND curScintilla = (which == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
+			double s1 = -1, s2 = -1;
+			int linec = ::SendMessage(curScintilla, SCI_GETLINECOUNT, 0, 0);
+			int curLine = ::SendMessage(curScintilla, SCI_LINEFROMPOSITION, ::SendMessage(curScintilla, SCI_GETCURRENTPOS, 0, 0), 0);
+			do {
+				int lineLength = ::SendMessage(curScintilla, SCI_LINELENGTH, curLine, 0);
+				if (lineLength - 1 > sizeof(sync))
+					continue;
+				::SendMessage(curScintilla, SCI_GETLINE, curLine, (WPARAM)sync);
+				sync[lineLength] = 0;
+				std::smatch match;
+				std::string subject(sync);
+				if (std::regex_search(subject, match, syncmatcher) && match.size() > 1) {
+					s1 = atoi(match.str(2).c_str()) / 1000.;
+					break;
+				}
+			} while (curLine-- > 0);
+			while (++curLine < linec) {
+				int lineLength = ::SendMessage(curScintilla, SCI_LINELENGTH, curLine, 0);
+				if (lineLength - 1 > sizeof(sync))
+					continue;
+				::SendMessage(curScintilla, SCI_GETLINE, curLine, (WPARAM)sync);
+				sync[lineLength] = 0;
+				std::smatch match;
+				std::string subject(sync);
+				if (std::regex_search(subject, match, syncmatcher) && match.size() > 1) {
+					s2 = atoi(match.str(2).c_str()) / 1000.;
+					break;
+				}
+			}
+			DockedPlayer::Media* media = dockedPlayer.GetMedia();
+			const FFMS_AudioProperties* aud = media->GetAudioProperties();
+			WaveView* wv = media->GetWaveView();
+			if (s1 >= 0 && s2 >= 0) {
+				s1 = s1 * aud->SampleRate;
+				s2 = s2 * aud->SampleRate;
+				wv->SetSelection((int) s1, (int)s2);
+			} else if (s1 >= 0) {
+				s1 = s1 * aud->SampleRate;
+				wv->SetSelection((int) s1, -1);
+			}else
+				wv->SetSelection(-1, -1);
+			if (wv->HasChanged()) {
+				dockedPlayer.ScrollWaveSlider(std::max(0, (int)(s1 - aud->NumSamples / wv->GetZoom() / 8)));
+				dockedPlayer.Invalidate();
+			}
+			break;
+		}
+
+	}
 }
 
 extern "C" __declspec(dllexport) LRESULT messageProc(UINT Message, WPARAM wParam, LPARAM lParam) {

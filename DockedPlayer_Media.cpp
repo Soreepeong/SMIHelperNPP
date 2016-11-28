@@ -71,12 +71,14 @@ DockedPlayer::Media::~Media() {
 		FFMS_DestroyAudioSource(mFFA);
 	if (mWaveOut != NULL)
 		waveOutClose(mWaveOut);
+	if (mWaveView != NULL)
+		delete mWaveView;
 	mWaveOut = NULL;
 	mFFV = NULL;
 	mFFA = NULL;
 	mFrame = NULL;
 	mVideoTrack = NULL;
-
+	mWaveView = NULL;
 	mDockedPlayer->StopTrackbarUpdate(this);
 	CloseHandle(mDecodeAudioWait);
 	CloseHandle(mDecodeVideoWait);
@@ -151,7 +153,18 @@ void DockedPlayer::Media::OpenFileInternal(TCHAR *u16, char *u8, TCHAR *iu16, ch
 			WAVE_FORMAT_IEEE_FLOAT : WAVE_FORMAT_PCM;
 
 		if (waveOutOpen(&mWaveOut, WAVE_MAPPER, &mWaveFormat, 0, 0, CALLBACK_NULL) != MMSYSERR_NOERROR) goto done;
+		mWaveView = new WaveView(&mWaveFormat, mFFAP->NumSamples);
+		mWaveView->ZoomTo(std::pow(1.2, 16));
+		if (vidId >= 0) {
+			const FFMS_TrackTimeBase *base = FFMS_GetTimeBase(mVideoTrack);
+			for (int i = 0; i < mFFVP->NumFrames; i++) {
+				const FFMS_FrameInfo *info = FFMS_GetFrameInfo(mVideoTrack, i);
+				if (info->KeyFrame)
+					mWaveView->AddKeyframe(info->PTS * base->Num / (double)base->Den / 1000);
+			}
+		}
 	}
+
 
 done:
 	if (index != NULL)
@@ -265,6 +278,29 @@ void DockedPlayer::Media::RenderAudioInternal() {
 	char *buf2 = new char[1048576];
 	hdr->lpData = buf;
 	hdr2->lpData = buf2;
+	{
+		const int blockSize = mWaveView->GetBlockSize();
+		char *buf = new char[blockSize * mFFAP->BitsPerSample * mFFAP->Channels / 8];
+		int lastNotify = 0;
+		for (int i = 0; i < mFFAP->NumSamples && mState != PlaybackState::STATE_CLOSED; i += blockSize) {
+			int readSize = blockSize;
+			if (i + readSize > mFFAP->NumSamples)
+				readSize = mFFAP->NumSamples - i;
+			if (0 != FFMS_GetAudio(mFFA, buf, i, readSize, &errinfo))
+				break;
+			memset(buf + readSize * mFFAP->BitsPerSample * mFFAP->Channels / 8, 0, blockSize - readSize);
+			mWaveView->FillBlock(buf);
+			if (GetTickCount() - 100 > lastNotify) {
+				lastNotify = GetTickCount();
+				mAudioWaveformGenerationStatus = (double)i / mFFAP->NumSamples;
+				mDockedPlayer->Invalidate(&(mDockedPlayer->mWaveRect));
+				mDockedPlayer->Invalidate(&(mDockedPlayer->mWaveSliderRect));
+			}
+		}
+		mAudioWaveformGenerationStatus = 1;
+		mDockedPlayer->Invalidate(&(mDockedPlayer->mWaveRect));
+		mDockedPlayer->Invalidate(&(mDockedPlayer->mWaveSliderRect));
+	}
 	while (mState != PlaybackState::STATE_CLOSED) {
 		WaitForSingleObject(mDecodeAudioWait, INFINITE);
 		while (mState == PlaybackState::STATE_RUNNING) {
@@ -283,9 +319,7 @@ void DockedPlayer::Media::RenderAudioInternal() {
 			waveOutPrepareHeader(mWaveOut, hdr, sizeof(WAVEHDR));
 			waveOutWrite(mWaveOut, hdr, sizeof(WAVEHDR));
 
-			{
-				PWAVEHDR _t = hdr; hdr = hdr2; hdr2 = _t;
-			}
+			{ PWAVEHDR _t = hdr; hdr = hdr2; hdr2 = _t; }
 
 			mAudioFrameIndex += sampc;
 			if ((mAudioFrameIndex - mAudioStartFrameIndex + 100) * 1000 / mFFAP->SampleRate < dur) // sync again if > 100ms
@@ -333,7 +367,7 @@ DWORD WINAPI DockedPlayer::Media::RenderAudioExternal(PVOID ptr) {
 
 
 HRESULT DockedPlayer::Media::Play() {
-	if (mState != STATE_PAUSED)
+	if (mState != STATE_PAUSED || (mFFA != NULL && mAudioWaveformGenerationStatus < 0))
 		return ERROR_INVALID_STATE;
 
 	mState = STATE_RUNNING;
@@ -346,11 +380,12 @@ HRESULT DockedPlayer::Media::Play() {
 	mDockedPlayer->StartTrackbarUpdate(this);
 	SetEvent(mDecodeVideoWait);
 	SetEvent(mDecodeAudioWait);
+	mDockedPlayer->ScrollWaveSlider();
 	return ERROR_SUCCESS;
 }
 
 HRESULT DockedPlayer::Media::PlayRange(double start, double end) {
-	if (mState != STATE_PAUSED)
+	if (mState != STATE_PAUSED || (mFFA != NULL && mAudioWaveformGenerationStatus < 0))
 		return ERROR_INVALID_STATE;
 
 	mDockedPlayer->SetTrackbarPosition(this, (int)(start*mProgressMax / GetLength()));
@@ -371,6 +406,7 @@ HRESULT DockedPlayer::Media::PlayRange(double start, double end) {
 	mDockedPlayer->StartTrackbarUpdate(this);
 	SetEvent(mDecodeVideoWait);
 	SetEvent(mDecodeAudioWait);
+	mDockedPlayer->ScrollWaveSlider();
 	return ERROR_SUCCESS;
 }
 
@@ -412,7 +448,7 @@ int DockedPlayer::Media::TimeToFrame(double time) const {
 }
 
 double DockedPlayer::Media::GetLength() const {
-	if (mState == STATE_CLOSED || mState == STATE_OPENING)
+	if (mState == STATE_CLOSED || mState == STATE_OPENING || mState == STATE_ERROR)
 		return ERROR_INVALID_STATE;
 	if (mFFA != NULL)
 		return mFFAP->LastTime - mFFAP->FirstTime;
@@ -421,7 +457,7 @@ double DockedPlayer::Media::GetLength() const {
 }
 
 HRESULT DockedPlayer::Media::SetTime(double time, bool updateTrackbarPosition) {
-	if (mState == STATE_CLOSED || mState == STATE_OPENING)
+	if (mState == STATE_CLOSED || mState == STATE_OPENING || mState == STATE_ERROR)
 		return ERROR_INVALID_STATE;
 	if(updateTrackbarPosition)
 		mDockedPlayer->SetTrackbarPosition(this, (int)(time*mProgressMax / GetLength()));
@@ -434,10 +470,10 @@ HRESULT DockedPlayer::Media::SetTime(double time, bool updateTrackbarPosition) {
 }
 
 double DockedPlayer::Media::GetTime() {
-	if (mState == STATE_CLOSED || mState == STATE_OPENING)
+	if (mState == STATE_CLOSED || mState == STATE_OPENING || mState == STATE_ERROR)
 		return -1;
 	if (mFFV == NULL)
-		return mAudioFrameIndex / (double)mFFAP->SampleRate;
+		return mVideoFrameIndex / (double)mFFAP->SampleRate;
 	FFMS_Track *trk = FFMS_GetTrackFromVideo(mFFV);
 	const FFMS_TrackTimeBase *base = FFMS_GetTimeBase(trk);
 	EnterCriticalSection(&mDecoderSync);
@@ -448,21 +484,19 @@ double DockedPlayer::Media::GetTime() {
 }
 
 ULONGLONG DockedPlayer::Media::GetFrameCount() const {
-	if (mState == STATE_CLOSED || mState == STATE_OPENING)
+	if (mState == STATE_CLOSED || mState == STATE_OPENING || mState == STATE_ERROR)
 		return ERROR_INVALID_STATE;
 	if (mFFVP == NULL)
 		return mFFAP->NumSamples;
 	return mFFVP->NumFrames;
 }
 ULONGLONG DockedPlayer::Media::GetFrameIndex() const {
-	if (mState == STATE_CLOSED || mState == STATE_OPENING)
+	if (mState == STATE_CLOSED || mState == STATE_OPENING || mState == STATE_ERROR)
 		return ERROR_INVALID_STATE;
-	if (mFFVP == NULL)
-		return mAudioFrameIndex;
 	return mVideoFrameIndex;
 }
 HRESULT DockedPlayer::Media::SetFrameIndex(ULONGLONG frame, bool updateTrackbarPosition) {
-	if (mState == STATE_CLOSED || mState == STATE_OPENING)
+	if (mState == STATE_CLOSED || mState == STATE_OPENING || mState == STATE_ERROR)
 		return -1;
 	ULONGLONG num = mFFVP == NULL ? mFFAP->NumSamples : mFFVP->NumFrames;
 	mVideoFrameIndex = (int)max(0, min(frame, num - 1));
@@ -476,6 +510,28 @@ HRESULT DockedPlayer::Media::SetFrameIndex(ULONGLONG frame, bool updateTrackbarP
 	return ERROR_SUCCESS;
 }
 
+int DockedPlayer::Media::GetAudioFrameIndex() const {
+	if (mState == STATE_CLOSED || mState == STATE_OPENING || mState == STATE_ERROR)
+		return ERROR_INVALID_STATE;
+	return mFFV == NULL ? mVideoFrameIndex : mAudioFrameIndex;
+}
+
 BOOL DockedPlayer::Media::HasVideo() const {
 	return mFFV != NULL;
+}
+
+bool DockedPlayer::Media::RenderAudio(const HDC dc, const RECT &rct) {
+	if (mWaveView == NULL)
+		return false;
+	mWaveView->SetParameters(rct.right - rct.left, rct.bottom - rct.top);
+	if (mWaveView->HasChanged())
+		mWaveView->DrawBitmap();
+
+	const BITMAPINFO *binfo = mWaveView->GetBitmapInfo();
+	StretchDIBits(dc, 
+		rct.left, rct.top, binfo->bmiHeader.biWidth, binfo->bmiHeader.biHeight,
+		0, 0, binfo->bmiHeader.biWidth, binfo->bmiHeader.biHeight,
+		mWaveView->GetBitmap(), binfo, DIB_RGB_COLORS, SRCCOPY);
+
+	return true;
 }

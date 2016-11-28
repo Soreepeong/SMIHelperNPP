@@ -47,6 +47,8 @@ DWORD WINAPI HandleMessages(LPARAM lParam) {
 		case VK_F5: insertSubtitleCode(); break;
 		case VK_F6: insertSubtitleCodeEmpty(); break;
 		case VK_F9: playerPlayPause(); break;
+		case 'R':
+		case VK_SPACE:
 		case VK_F10: playerPlayRange(); break;
 		case VK_F8: playerJumpTo(); break;
 		case VK_F7: gotoCurrentLine(); break;
@@ -70,7 +72,6 @@ DWORD WINAPI HandleMessages(LPARAM lParam) {
 		case VK_DOWN:
 			insertSubtitleCodeEmpty();
 			break;
-		case VK_SPACE: playerPlayPause(); break;
 		case 'Z': 
 		case VK_NUMPAD0: {
 			int which = -1;
@@ -86,6 +87,11 @@ DWORD WINAPI HandleMessages(LPARAM lParam) {
 			::SendMessage(nppData._nppHandle, NPPM_SAVECURRENTFILE, 0, 0);
 			break;
 		}
+		case 'Q': playerPlayRangeInternal(-0.5, 0); break;
+		case 'E': playerPlayRangeInternal(0.5, 0); break;
+		case 'D': playerPlayRangeInternal(0, -0.5); break;
+		case 'W': playerPlayRangeInternal(0, 0.5); break;
+		case 'G': selectNextLine(); break;
 	}
 	return 0;
 }
@@ -99,37 +105,33 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 				case WM_KEYUP:
 				case WM_SYSKEYUP:
 					PKBDLLHOOKSTRUCT p = (PKBDLLHOOKSTRUCT)lParam;
-					switch (p->vkCode) {
-						case VK_F5:
-						case VK_F6:
-						case VK_F9:
-						case VK_F8:
-						case VK_F7: {
-							if (wParam == WM_KEYDOWN) {
+					if(VK_F5 <= p->vkCode && p->vkCode <= VK_F10) {
+						if (wParam == WM_KEYDOWN) {
+							PostMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN, (WPARAM)moduleName, (LPARAM)p->vkCode);
+							return 1;
+						}
+					} else if ('A' <= p->vkCode && p->vkCode <= 'Z') {
+						if (dockedPlayer.IsFocused()) {
+							if (wParam == WM_KEYDOWN)
+								PostMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN, (WPARAM)moduleName, (LPARAM)p->vkCode);
+							return 1;
+						}
+					}else switch (p->vkCode) {
+						case VK_SPACE:
+						case VK_LEFT:
+						case VK_RIGHT: {
+							if (dockedPlayer.IsFocused() || (GetAsyncKeyState(VK_CONTROL) && GetAsyncKeyState(VK_MENU) && wParam == WM_KEYDOWN)) {
 								PostMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN, (WPARAM)moduleName, (LPARAM)p->vkCode);
 								return 1;
 							}
 							break;
 						}
-						case VK_SPACE:
-						case VK_LEFT:
-						case VK_RIGHT: {
-							if (GetAsyncKeyState(VK_CONTROL) && GetAsyncKeyState(VK_MENU) && wParam == WM_KEYDOWN) {
-								PostMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN, (WPARAM)moduleName, (LPARAM)p->vkCode);
-								return 1;
-							}
-						}
-						case 'Z':
-						case 'X':
-						case 'C':
-						case 'S':
 						case VK_NUMPAD0:
 						case VK_UP:
 						case VK_DOWN:{
 							if (dockedPlayer.IsFocused()) {
-								if (wParam == WM_KEYDOWN) {
+								if (wParam == WM_KEYDOWN)
 									PostMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN, (WPARAM)moduleName, (LPARAM)p->vkCode);
-								}
 								return 1;
 							}
 							break;
@@ -370,6 +372,140 @@ void insertSubtitleCode() {
 	LockWindowUpdate(NULL);
 }
 
+void setSubtitleCode(double time_s) {
+	// Get the current scintilla
+	int which = -1;
+	char sync[8192];
+	::SendMessage(nppData._nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&which);
+	if (which == -1)
+		return;
+
+	int time = (int)(time_s * 1000);
+
+	HWND curScintilla = (which == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
+
+	bool replace = false;
+	int curLine = ::SendMessage(curScintilla, SCI_LINEFROMPOSITION, ::SendMessage(curScintilla, SCI_GETCURRENTPOS, 0, 0), 0);
+	int selLength = 0, selStart = 0;
+	do {
+		int lineLength = ::SendMessage(curScintilla, SCI_LINELENGTH, curLine, 0);
+		if (lineLength - 1 > sizeof(sync))
+			continue;
+		::SendMessage(curScintilla, SCI_GETLINE, curLine, (WPARAM)sync);
+		sync[lineLength] = 0;
+		std::smatch match;
+		std::string subject(sync);
+		if (std::regex_search(subject, match, syncmatcher) && match.size() >= 1) {
+			/*
+			subject = std::regex_replace(subject, tag_remover, "");
+			subject = std::regex_replace(subject, space_remover, "");
+			if (subject != "&nbsp;")
+				replace = true;
+			//*/
+			selLength = match.length();
+			selStart = SendMessage(curScintilla, SCI_POSITIONFROMLINE, curLine, 0);
+			replace = true;
+			break;
+		}
+	} while (--curLine > 0);
+
+	::SendMessage(curScintilla, SCI_SETTARGETRANGE, selStart, selStart + selLength);
+	snprintf(sync, 512, "<Sync Start=%d>", time);
+	::SendMessage(curScintilla, SCI_REPLACETARGET, -1, (LPARAM)sync);
+}
+
+void setSubtitleCodeEmpty(double time_s) {
+	// Get the current scintilla
+	int which = -1;
+	::SendMessage(nppData._nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&which);
+	if (which == -1)
+		return;
+
+	int time = (int)(time_s * 1000);
+
+	HWND curScintilla = (which == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
+
+	char sync[2048];
+	int linec = ::SendMessage(curScintilla, SCI_GETLINECOUNT, 0, 0);
+	int curLine = ::SendMessage(curScintilla, SCI_LINEFROMPOSITION, ::SendMessage(curScintilla, SCI_GETCURRENTPOS, 0, 0), 0) + 1;
+	int selLength = 0, selStart = SendMessage(curScintilla, SCI_POSITIONFROMLINE, linec - 1, 0);
+	bool replace = false;
+	do {
+		int lineLength = ::SendMessage(curScintilla, SCI_LINELENGTH, curLine, 0);
+		if (lineLength - 1 > sizeof(sync))
+			continue;
+		::SendMessage(curScintilla, SCI_GETLINE, curLine, (WPARAM)sync);
+		sync[lineLength] = 0;
+		std::smatch match;
+		std::string subject(sync);
+		if (std::regex_search(subject, match, syncmatcher) && match.size() >= 1) {
+			selStart = SendMessage(curScintilla, SCI_POSITIONFROMLINE, curLine, 0);
+			subject.erase(subject.begin(), subject.begin() + match.length());
+			subject = std::regex_replace(subject, tag_remover, "");
+			subject = std::regex_replace(subject, space_remover, "");
+			if (subject == "&nbsp;") {
+				selLength = match.length();
+				replace = true;
+			}
+			break;
+		}
+	} while (++curLine < linec);
+
+	::SendMessage(curScintilla, SCI_SETTARGETRANGE, selStart, selStart + selLength);
+	if(replace)
+		snprintf(sync, 512, "<Sync Start=%d>", time);
+	else
+		snprintf(sync, 512, "<Sync Start=%d><P>&nbsp;\r\n", time);
+	::SendMessage(curScintilla, SCI_REPLACETARGET, -1, (LPARAM)sync);
+}
+
+void selectNextLine() {
+	// Get the current scintilla
+	int which = -1;
+	::SendMessage(nppData._nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&which);
+	if (which == -1)
+		return;
+
+	HWND curScintilla = (which == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
+
+	char sync[2048];
+	int linec = ::SendMessage(curScintilla, SCI_GETLINECOUNT, 0, 0);
+	int curLine = ::SendMessage(curScintilla, SCI_LINEFROMPOSITION, ::SendMessage(curScintilla, SCI_GETCURRENTPOS, 0, 0), 0) + 1;
+	do {
+		int lineLength = ::SendMessage(curScintilla, SCI_LINELENGTH, curLine, 0);
+		if (lineLength - 1 > sizeof(sync))
+			continue;
+		::SendMessage(curScintilla, SCI_GETLINE, curLine, (WPARAM)sync);
+		sync[lineLength] = 0;
+		std::smatch match;
+		std::string subject(sync);
+		if (std::regex_search(subject, match, syncmatcher) && match.size() >= 1) {
+			subject.erase(subject.begin(), subject.begin() + match.length());
+			subject = std::regex_replace(subject, tag_remover, "");
+			subject = std::regex_replace(subject, space_remover, "");
+			if (subject != "&nbsp;") {
+				int selStart = SendMessage(curScintilla, SCI_POSITIONFROMLINE, curLine, 0);
+				SendMessage(curScintilla, SCI_SETEMPTYSELECTION, selStart, 0);
+				SendMessage(curScintilla, SCI_SCROLLCARET, 0, 0);
+				break;
+			}
+		}
+	} while (++curLine < linec);
+}
+
+void createUndoPoint(bool begin) {
+	int which = -1;
+	::SendMessage(nppData._nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&which);
+	if (which == -1)
+		return;
+	HWND curScintilla = (which == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
+	if(begin)
+		::SendMessage(curScintilla, SCI_BEGINUNDOACTION, 0, 0);
+	else
+		::SendMessage(curScintilla, SCI_ENDUNDOACTION, 0, 0);
+}
+
+
 void insertSubtitleCodeEmpty() {
 	// Get the current scintilla
 	int which = -1;
@@ -395,7 +531,6 @@ void insertSubtitleCodeEmpty() {
 	::SendMessage(curScintilla, SCI_LINESCROLL, 0, 1);
 	::SendMessage(curScintilla, SCI_ENDUNDOACTION, 0, 0);
 }
-
 
 void playerJumpTo() {
 	int which = -1;
@@ -485,67 +620,80 @@ void playerPlayPause() {
 	}
 }
 
-void playerPlayRange() {
+void playerPlayRangeInternal(double begin, double end) {
 	if (bUseDockedPlayer) {
 		if (dockedPlayer.GetMedia() == NULL)
 			tryOpenMedia();
 		else
 			switch (dockedPlayer.GetMedia()->State()) {
-			case PlaybackState::STATE_PAUSED:
-			case PlaybackState::STATE_RUNNING: {
-				int which = -1;
-				char sync[8192];
-				::SendMessage(nppData._nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&which);
-				if (which == -1)
-					return;
-				HWND curScintilla = (which == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
-				double s1 = -1, s2 = -1;
-				int linec = ::SendMessage(curScintilla, SCI_GETLINECOUNT, 0, 0);
-				int curLine = ::SendMessage(curScintilla, SCI_LINEFROMPOSITION, ::SendMessage(curScintilla, SCI_GETCURRENTPOS, 0, 0), 0);
-				do {
-					int lineLength = ::SendMessage(curScintilla, SCI_LINELENGTH, curLine, 0);
-					if (lineLength - 1 > sizeof(sync))
-						continue;
-					::SendMessage(curScintilla, SCI_GETLINE, curLine, (WPARAM)sync);
-					sync[lineLength] = 0;
-					std::smatch match;
-					std::string subject(sync);
-					if (std::regex_search(subject, match, syncmatcher) && match.size() > 1) {
-						s1 = atoi(match.str(2).c_str()) / 1000.;
-						break;
+				case PlaybackState::STATE_PAUSED:
+				case PlaybackState::STATE_RUNNING: {
+					int which = -1;
+					char sync[8192];
+					::SendMessage(nppData._nppHandle, NPPM_GETCURRENTSCINTILLA, 0, (LPARAM)&which);
+					if (which == -1)
+						return;
+					HWND curScintilla = (which == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
+					double s1 = -1, s2 = -1;
+					int linec = ::SendMessage(curScintilla, SCI_GETLINECOUNT, 0, 0);
+					int curLine = ::SendMessage(curScintilla, SCI_LINEFROMPOSITION, ::SendMessage(curScintilla, SCI_GETCURRENTPOS, 0, 0), 0);
+					do {
+						int lineLength = ::SendMessage(curScintilla, SCI_LINELENGTH, curLine, 0);
+						if (lineLength - 1 > sizeof(sync))
+							continue;
+						::SendMessage(curScintilla, SCI_GETLINE, curLine, (WPARAM)sync);
+						sync[lineLength] = 0;
+						std::smatch match;
+						std::string subject(sync);
+						if (std::regex_search(subject, match, syncmatcher) && match.size() > 1) {
+							s1 = atoi(match.str(2).c_str()) / 1000.;
+							break;
+						}
+					} while (curLine-- > 0);
+					while (++curLine < linec) {
+						int lineLength = ::SendMessage(curScintilla, SCI_LINELENGTH, curLine, 0);
+						if (lineLength - 1 > sizeof(sync))
+							continue;
+						::SendMessage(curScintilla, SCI_GETLINE, curLine, (WPARAM)sync);
+						sync[lineLength] = 0;
+						std::smatch match;
+						std::string subject(sync);
+						if (std::regex_search(subject, match, syncmatcher) && match.size() > 1) {
+							s2 = atoi(match.str(2).c_str()) / 1000.;
+							break;
+						}
 					}
-				} while (curLine-- > 0);
-				while (++curLine < linec){
-					int lineLength = ::SendMessage(curScintilla, SCI_LINELENGTH, curLine, 0);
-					if (lineLength - 1 > sizeof(sync))
-						continue;
-					::SendMessage(curScintilla, SCI_GETLINE, curLine, (WPARAM)sync);
-					sync[lineLength] = 0;
-					std::smatch match;
-					std::string subject(sync);
-					if (std::regex_search(subject, match, syncmatcher) && match.size() > 1) {
-						s2 = atoi(match.str(2).c_str()) / 1000.;
-						break;
+					if (s2 < 0)
+						s2 = dockedPlayer.GetMedia()->GetLength();
+					if (s1 >= 0 && s2 >= 0) {
+						dockedPlayer.GetMedia()->Pause();
+						if (begin < 0) {
+							s2 = s1;
+							s1 += begin;
+						}else if(begin > 0){
+							s2 = s1 + begin;
+						} else if (end < 0) {
+							s1 = s2 + end;
+						} else if (end > 0) {
+							s1 = s2;
+							s2 += end;
+						}
+						dockedPlayer.GetMedia()->PlayRange(s1, s2);
 					}
+					break;
 				}
-				if (s1 >= 0 && s2 >= 0) {
-					dockedPlayer.GetMedia()->Pause();
-					dockedPlayer.GetMedia()->PlayRange(s1, s2);
-				} else if (s1 >= 0) {
-					dockedPlayer.GetMedia()->Pause();
-					dockedPlayer.GetMedia()->SetTime(s1);
-					dockedPlayer.GetMedia()->Play();
-				}
-				break;
+				case PlaybackState::STATE_OPENING:
+					break;
+				default:
+					tryOpenMedia();
 			}
-			case PlaybackState::STATE_OPENING:
-				break;
-			default:
-				tryOpenMedia();
-		}
 	} else {
 		playerPlayPause();
 	}
+}
+
+void playerPlayRange() {
+	playerPlayRangeInternal(0, 0);
 }
 
 void playerRew() {
