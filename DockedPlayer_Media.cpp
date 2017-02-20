@@ -138,8 +138,10 @@ void DockedPlayer::Media::OpenFileInternal(TCHAR *u16, char *u8, TCHAR *iu16, ch
 				(mVideoBitmapInfo.bmiHeader.biHeight = mFrame->ScaledHeight == -1 ? mFrame->EncodedHeight : mFrame->ScaledHeight) * 4;
 		} else if (audId < 0)
 			goto done;
-		else
+		else {
 			errinfo = { 0, 0 };
+			vidId = -1;
+		}
 	}
 	if (audId >= 0) {
 		if ((mFFA = FFMS_CreateAudioSource(u8, audId, index, FFMS_DELAY_FIRST_VIDEO_TRACK, &errinfo)) == NULL) goto done;
@@ -307,7 +309,7 @@ void DockedPlayer::Media::RenderAudioInternal() {
 			UINT32 dur = timeGetTime() - mPlayStartTime;
 			if (dur < 100)
 				dur = 100;
-			int sampc = mFFAP->SampleRate * 33 / 1000;
+			int sampc = mFFAP->SampleRate * 100 / 1000;
 			if (mAudioFrameIndex + sampc > mAudioEndFrameIndex)
 				sampc = (int)(mAudioFrameIndex - mAudioEndFrameIndex);
 
@@ -350,7 +352,12 @@ void DockedPlayer::Media::ResetRendererSync() {
 		const FFMS_FrameInfo *mFrameInfo = FFMS_GetFrameInfo(mVideoTrack, mVideoFrameIndex);
 		const FFMS_TrackTimeBase *base = FFMS_GetTimeBase(mVideoTrack);
 		mPlayStartPos = mFrameInfo->PTS*base->Num / base->Den;
-		mAudioFrameIndex = mAudioStartFrameIndex = (UINT64)(mFrameInfo->PTS * base->Num / (double)base->Den / 1000 * mFFAP->SampleRate);
+		if (mVideoFrameIndex == 0)
+			mAudioFrameIndex = mAudioStartFrameIndex = 0;
+		else {
+			mFrameInfo = FFMS_GetFrameInfo(mVideoTrack, mVideoFrameIndex-1);
+			mAudioFrameIndex = mAudioStartFrameIndex = (UINT64)(mFrameInfo->PTS * base->Num / (double)base->Den / 1000 * mFFAP->SampleRate);
+		}
 	} else {
 		mPlayStartPos = mVideoFrameIndex * 1000 / mFFAP->SampleRate;
 		mAudioFrameIndex = mAudioStartFrameIndex = mVideoFrameIndex;

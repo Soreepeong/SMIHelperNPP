@@ -22,7 +22,6 @@ private:
 	int mSelectionLeft;
 	int mSelectionRight;
 
-	void WaveView::hsv2rgb(double h, double s, double v, int &r, int &g, int &b);
 	int GetColor(float strength, int colorset);
 
 public:

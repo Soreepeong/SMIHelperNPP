@@ -9,8 +9,8 @@
 
 inline std::string trim(const std::string &s)
 {
-	auto  wsfront = std::find_if_not(s.begin(), s.end(), [](int c) {return std::isspace(c); });
-	return std::string(wsfront, std::find_if_not(s.rbegin(), std::string::const_reverse_iterator(wsfront), [](int c) {return std::isspace(c); }).base());
+	auto  wsfront = std::find_if_not(s.begin(), s.end(), [](int c) {return std::isspace((unsigned char)c); });
+	return std::string(wsfront, std::find_if_not(s.rbegin(), std::string::const_reverse_iterator(wsfront), [](int c) {return std::isspace((unsigned char)c); }).base());
 }
 std::string *convertSMItoSRT(char *subject) {
 	std::cregex_iterator next(subject, &subject[strlen(subject)], syncmatcher);

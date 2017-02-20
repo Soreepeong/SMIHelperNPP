@@ -83,75 +83,120 @@ void WaveView::FillBlock(char* decoded) {
 	mChanged = true;
 }
 
-// http://stackoverflow.com/questions/3018313/algorithm-to-convert-rgb-to-hsv-and-hsv-to-rgb-in-range-0-255-for-both
-void WaveView::hsv2rgb(double hh, double s, double v, int &r, int &g, int &b) {
-	double      p, q, t, ff;
-	long        i;
-	hh /= 255;
-	s /= 255;
-	v /= 255;
-
-	if (s <= 0.0) {       // < is bogus, just shuts up warnings
-		r = g = b = 0;
+void hsl_to_rgb(int H, int S, int L, unsigned char *R, unsigned char *G, unsigned char *B) {
+	while (H < 0)
+		H += 256;
+	H = H % 256;
+	if (S == 0) {
+		*R = L;
+		*G = L;
+		*B = L;
 		return;
 	}
-	if (hh >= 360.0) hh = 0.0;
-	hh /= 60.0;
-	i = (long)hh;
-	ff = hh - i;
-	p = v * (1.0 - s);
-	q = v * (1.0 - (s * ff));
-	t = v * (1.0 - (s * (1.0 - ff)));
 
-	switch (i) {
-		case 0:
-			r = (int)(v*255);
-			g = (int)(t * 255);
-			b = (int)(p * 255);
-			break;
-		case 1:
-			r = (int)(q * 255);
-			g = (int)(v * 255);
-			b = (int)(p * 255);
-			break;
-		case 2:
-			r = (int)(p * 255);
-			g = (int)(v * 255);
-			b = (int)(t * 255);
-			break;
-
-		case 3:
-			r = (int)(p * 255);
-			g = (int)(q * 255);
-			b = (int)(v * 255);
-			break;
-		case 4:
-			r = (int)(t * 255);
-			g = (int)(p * 255);
-			b = (int)(v * 255);
-			break;
-		case 5:
-		default:
-			r = (int)(v * 255);
-			g = (int)(p * 255);
-			b = (int)(q * 255);
-			break;
+	if (L == 128 && S == 255) {
+		switch (H) {
+			case 0:
+			case 255: // actually this is wrong, since this is more like 359 degrees... but it's what you'd expect (sadly :)
+				*R = 255;
+				*G = 0;
+				*B = 0;
+				return;
+			case 43:
+				*R = 255;
+				*G = 255;
+				*B = 0;
+				return;
+			case 85:
+				*R = 0;
+				*G = 255;
+				*B = 0;
+				return;
+			case 128:
+				*R = 0;
+				*G = 255;
+				*B = 255;
+				return;
+			case 171:
+				*R = 0;
+				*G = 0;
+				*B = 255;
+				return;
+			case 213:
+				*R = 255;
+				*G = 0;
+				*B = 255;
+				return;
+		}
 	}
+
+	float h, s, l, r, g, b;
+	h = H / 255.f;
+	s = S / 255.f;
+	l = L / 255.f;
+
+	float temp2;
+	if (l < .5) {
+		temp2 = l * (1. + s);
+	} else {
+		temp2 = l + s - l*s;
+	}
+
+	float temp1 = 2.f * l - temp2;
+
+	// assume h is in range [0;1]
+	float temp3[3];
+	temp3[0] = h + 1.f / 3.f;
+	if (temp3[0] > 1.f) temp3[0] -= 1.f;
+	temp3[1] = h;
+	temp3[2] = h - 1.f / 3.f;
+	if (temp3[2] < 0.f) temp3[2] += 1.f;
+
+	if (6.f * temp3[0] < 1.f)
+		r = temp1 + (temp2 - temp1) * 6.f * temp3[0];
+	else if (2.f * temp3[0] < 1.f)
+		r = temp2;
+	else if (3.f * temp3[0] < 2.f)
+		r = temp1 + (temp2 - temp1) * ((2.f / 3.f) - temp3[0]) * 6.f;
+	else
+		r = temp1;
+
+	if (6.f * temp3[1] < 1.f)
+		g = temp1 + (temp2 - temp1) * 6.f * temp3[1];
+	else if (2.f * temp3[1] < 1.f)
+		g = temp2;
+	else if (3.f * temp3[1] < 2.f)
+		g = temp1 + (temp2 - temp1) * ((2.f / 3.f) - temp3[1]) * 6.f;
+	else
+		g = temp1;
+
+	if (6.f * temp3[2] < 1.f)
+		b = temp1 + (temp2 - temp1) * 6.f * temp3[2];
+	else if (2.f * temp3[2] < 1.f)
+		b = temp2;
+	else if (3.f * temp3[2] < 2.f)
+		b = temp1 + (temp2 - temp1) * ((2.f / 3.f) - temp3[2]) * 6.f;
+	else
+		b = temp1;
+
+	*R = std::min(255, std::max(0, (int)(r * 255)));
+	*G = std::min(255, std::max(0, (int)(g * 255)));
+	*B = std::min(255, std::max(0, (int)(b * 255)));
 }
 
 int WaveView::GetColor(float strength, int colorset) {
-	int r, g, b;
+	unsigned char r, g, b;
 	if (strength < 0) strength = 0;
 	if (strength > 1) strength = 1;
 	switch (colorset) {
 		case 0: // normal
-			hsv2rgb(191 + -128 * strength,
+			hsl_to_rgb(12,
 				127 + 128 * strength,
-				0 + 255 * strength, r, g, b); break;
+				0 + 255 * strength, &r, &g, &b); break;
 		case 1: // selection
-			hsv2rgb(191 + -128 * strength,
+			hsl_to_rgb(12,
 				127 + 128 * strength,
-				63 + 192 * strength, r, g, b); break;
+				63 + 192 * strength, &r, &g, &b); break;
 	}
 	return RGB(r, g, b);
 }
@@ -223,7 +268,7 @@ void WaveView::DrawBitmap() {
 	const double pixel_s = (double)(to_sample - from_sample) / mFormat->nSamplesPerSec / width;
 	const int minband = 0;
 	const int maxband = 1 << mDerivationSize;
-	const int amplitude_scale = 2;
+	const int amplitude_scale = 3;
 	for (int i = 0; i < width; i++) {
 		int sample_index = (int) (i * pixel_s * mFormat->nSamplesPerSec + from_sample);
 		int colorset = sample_index >= mSelectionLeft && sample_index < mSelectionRight ? 1 : 0;

@@ -34,13 +34,7 @@ const TCHAR configFileName[] = TEXT("SMIHelper.ini");
 FuncItem funcItem[nbFunc];
 NppData nppData;
 
-bool isSMIfile() {
-	TCHAR filename[MAX_PATH];
-	::SendMessage(nppData._nppHandle, NPPM_GETFILENAME, sizeof(filename), (WPARAM)filename);
-	int filename_len = wcslen(filename);
-	wcslwr(filename);
-	return filename_len >= 4 && wcscmp(filename + filename_len - 4, TEXT(".smi")) == 0;
-}
+bool isSMIfile = false;
 
 DWORD WINAPI HandleMessages(LPARAM lParam) {
 	switch ((int)lParam) {
@@ -53,13 +47,13 @@ DWORD WINAPI HandleMessages(LPARAM lParam) {
 		case VK_F8: playerJumpTo(); break;
 		case VK_F7: gotoCurrentLine(); break;
 		case VK_LEFT:
-			if (GetAsyncKeyState(VK_CONTROL) && dockedPlayer.IsFocused())
+			if (GetAsyncKeyState(VK_CONTROL) && dockedPlayer.IsFocused() && bUseDockedPlayer)
 				playerRewFrame();
 			else
 				playerRew();
 			break;
 		case VK_RIGHT:
-			if (GetAsyncKeyState(VK_CONTROL) && dockedPlayer.IsFocused())
+			if (GetAsyncKeyState(VK_CONTROL) && dockedPlayer.IsFocused() && bUseDockedPlayer)
 				playerFFFrame();
 			else
 				playerFF();
@@ -97,57 +91,62 @@ DWORD WINAPI HandleMessages(LPARAM lParam) {
 }
 
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
-	if ((GetForegroundWindow() == nppData._nppHandle || dockedPlayer.IsFocused()) && nCode == HC_ACTION) {
-		if (isSMIfile()) {
-			switch (wParam) {
-				case WM_KEYDOWN:
-				case WM_SYSKEYDOWN:
-				case WM_KEYUP:
-				case WM_SYSKEYUP:
-					PKBDLLHOOKSTRUCT p = (PKBDLLHOOKSTRUCT)lParam;
-					if(VK_F5 <= p->vkCode && p->vkCode <= VK_F10) {
-						if (wParam == WM_KEYDOWN) {
+	bool focused = (GetForegroundWindow() == nppData._nppHandle || (dockedPlayer.IsFocused() && bUseDockedPlayer));
+	if (nCode == HC_ACTION && isSMIfile && focused) {
+		switch (wParam) {
+			case WM_KEYDOWN:
+			case WM_SYSKEYDOWN:
+			case WM_KEYUP:
+			case WM_SYSKEYUP:
+				PKBDLLHOOKSTRUCT p = (PKBDLLHOOKSTRUCT)lParam;
+				if (VK_F5 <= p->vkCode && p->vkCode <= VK_F10) {
+					if (wParam == WM_KEYDOWN) {
+						PostMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN, (WPARAM)moduleName, (LPARAM)p->vkCode);
+						return 1;
+					}
+				} else if ('A' <= p->vkCode && p->vkCode <= 'Z') {
+					if (bUseDockedPlayer && dockedPlayer.IsFocused()) {
+						if (wParam == WM_KEYDOWN)
+							PostMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN, (WPARAM)moduleName, (LPARAM)p->vkCode);
+						return 1;
+					}
+				} else switch (p->vkCode) {
+					case VK_SPACE:
+					case VK_LEFT:
+					case VK_RIGHT: {
+						if ((bUseDockedPlayer && dockedPlayer.IsFocused()) || (GetAsyncKeyState(VK_CONTROL) && GetAsyncKeyState(VK_MENU) && wParam == WM_KEYDOWN)) {
 							PostMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN, (WPARAM)moduleName, (LPARAM)p->vkCode);
 							return 1;
 						}
-					} else if ('A' <= p->vkCode && p->vkCode <= 'Z') {
-						if (dockedPlayer.IsFocused()) {
+						break;
+					}
+					case VK_NUMPAD0:
+					case VK_UP:
+					case VK_DOWN: {
+						if (bUseDockedPlayer && dockedPlayer.IsFocused()) {
 							if (wParam == WM_KEYDOWN)
 								PostMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN, (WPARAM)moduleName, (LPARAM)p->vkCode);
 							return 1;
 						}
-					}else switch (p->vkCode) {
-						case VK_SPACE:
-						case VK_LEFT:
-						case VK_RIGHT: {
-							if (dockedPlayer.IsFocused() || (GetAsyncKeyState(VK_CONTROL) && GetAsyncKeyState(VK_MENU) && wParam == WM_KEYDOWN)) {
-								PostMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN, (WPARAM)moduleName, (LPARAM)p->vkCode);
-								return 1;
-							}
-							break;
-						}
-						case VK_NUMPAD0:
-						case VK_UP:
-						case VK_DOWN:{
-							if (dockedPlayer.IsFocused()) {
-								if (wParam == WM_KEYDOWN)
-									PostMessage(nppData._nppHandle, NPPM_MSGTOPLUGIN, (WPARAM)moduleName, (LPARAM)p->vkCode);
-								return 1;
-							}
-							break;
-						}
+						break;
 					}
-			}
+				}
 		}
 	}
 	return CallNextHookEx(NULL, nCode, wParam, lParam);
 }
 HHOOK hhkLowLevelKybd;
 
+void rehookKeybd() {
+	if (hhkLowLevelKybd != NULL)
+		UnhookWindowsHookEx(hhkLowLevelKybd);
+	hhkLowLevelKybd = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, 0, 0);
+}
+
 void pluginInit(HANDLE hModule) {
 	WSADATA w;
 	WSAStartup((MAKEWORD(2, 2)), &w);
-	hhkLowLevelKybd = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, 0, 0);
+	rehookKeybd();
 	CoInitializeEx(NULL, COINIT_MULTITHREADED | COINIT_DISABLE_OLE1DDE);
 	GetModuleFileName((HMODULE) hModule, moduleName, sizeof(moduleName));
 	wcscpy(moduleName, wcsrchr(moduleName, '\\') + 1);
@@ -192,6 +191,8 @@ void commandMenuInit() {
 	setCommand(12, TEXT("Add template"), addTemplate, NULL, false);
 	setCommand(13, TEXT("Make SRT"), makeSRT, NULL, false);
 	setCommand(14, TEXT("Make ASS"), makeASS, NULL, false);
+	setCommand(15, TEXT("Make SRT from all opened files"), makeSRTAll, NULL, false);
+	setCommand(16, TEXT("Make ASS from all opened files"), makeASSAll, NULL, false);
 	if (!bUseDockedPlayer)
 		useDockedPlayer();
 }
@@ -223,6 +224,10 @@ void onTabChanged(std::wstring selection, std::vector<std::wstring> &newlist) {
 			dockedPlayer.CloseTab(*i);
 	}
 	dockedPlayer.SetTab(selection);
+
+	int filename_len = wcslen(selection.c_str());
+	isSMIfile = filename_len >= 4 && _wcsicmp(selection.c_str() + filename_len - 4, TEXT(".smi")) == 0;
+	rehookKeybd();
 }
 
 void tryOpenMedia() {
@@ -809,6 +814,73 @@ void makeASS() {
 	curScintilla = (which == 0) ? nppData._scintillaMainHandle : nppData._scintillaSecondHandle;
 	::SendMessage(curScintilla, SCI_SETTEXT, 0, (LPARAM)res->c_str());
 	delete res;
+}
+
+void makeSRTAll() {
+	int n = SendMessage(nppData._nppHandle, NPPM_GETNBOPENFILES, 0, ALL_OPEN_FILES);
+	if (n > 0) {
+		TCHAR** files = new TCHAR*[n];
+		for (int i = 0; i < n; i++)
+			files[i] = new TCHAR[2048];
+		SendMessage(nppData._nppHandle, NPPM_GETOPENFILENAMES, (WPARAM)files, n);
+		for (int i = 0; i < n; i++) {
+			if (wcsstr(files[i], L".smi")) {
+				HANDLE h1 = CreateFile(files[i], GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, NULL, NULL);
+				if (h1 != INVALID_HANDLE_VALUE) {
+					wcscpy(files[i] + wcslen(files[i]), L".srt");
+					HANDLE h2 = CreateFile(files[i], GENERIC_WRITE, NULL, NULL, CREATE_NEW, NULL, NULL);
+					if (h2 != INVALID_HANDLE_VALUE) {
+						DWORD len = GetFileSize(h1, NULL);
+						char* buf = new char[len + 1];
+						ReadFile(h1, buf, len, &len, NULL);
+						std::string *res = convertSMItoSRT(buf);
+						WriteFile(h2, res->c_str(), res->length(), &len, NULL);
+						delete res;
+						delete buf;
+						CloseHandle(h2);
+					}
+					CloseHandle(h1);
+				}
+			}
+
+			delete[] files[i];
+		}
+		delete files;
+	}
+}
+
+void makeASSAll() {
+	int n = SendMessage(nppData._nppHandle, NPPM_GETNBOPENFILES, 0, ALL_OPEN_FILES);
+	if (n > 0) {
+		TCHAR** files = new TCHAR*[n];
+		for (int i = 0; i < n; i++)
+			files[i] = new TCHAR[2048];
+		SendMessage(nppData._nppHandle, NPPM_GETOPENFILENAMES, (WPARAM)files, n);
+		for (int i = 0; i < n; i++) {
+			if (wcsstr(files[i], L".smi")) {
+				HANDLE h1 = CreateFile(files[i], GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, NULL, NULL);
+				if (h1 != INVALID_HANDLE_VALUE) {
+					wcscpy(files[i] + wcslen(files[i]), L".ass");
+					HANDLE h2 = CreateFile(files[i], GENERIC_WRITE, NULL, NULL, CREATE_NEW, NULL, NULL);
+					if (h2 != INVALID_HANDLE_VALUE) {
+						DWORD len = GetFileSize(h1, NULL);
+						char* buf = new char[len + 1];
+						ReadFile(h1, buf, len, &len, NULL);
+						buf[len] = 0;
+						std::string *res = convertSMItoASS(buf);
+						WriteFile(h2, res->c_str(), res->length(), &len, NULL);
+						delete res;
+						delete buf;
+						CloseHandle(h2);
+					}
+					CloseHandle(h1);
+				}
+			}
+
+			delete[] files[i];
+		}
+		delete files;
+	}
 }
 
 void useDockedPlayer() {
